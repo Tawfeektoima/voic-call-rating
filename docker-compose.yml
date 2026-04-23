@@ -1,0 +1,24 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: call_rating_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: call_admin
+      POSTGRES_PASSWORD: call_rating_secret_2026
+      POSTGRES_DB: call_rating
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U call_admin -d call_rating"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+    driver: local
