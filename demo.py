@@ -207,7 +207,7 @@ def launch_ui():
                     outputs=[batch_results_table, batch_summary_output]
                 )
 
-    demo.launch(server_port=7860, share=False, inbrowser=True)
+    demo.launch(server_port=7860, share=True, inbrowser=True)
 
 if __name__ == "__main__":
     print("[*] Starting UI... please wait.")

@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     MAX_FILE_SIZE_MB: int = 100
     ALLOWED_EXTENSIONS: str = ".wav,.mp3,.m4a,.ogg,.flac,.webm"
 
+    # Redis & Celery
+    REDIS_URL: str = "redis://localhost:6379/0"
+    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
+
     @property
     def allowed_extensions_list(self) -> list[str]:
         return [ext.strip() for ext in self.ALLOWED_EXTENSIONS.split(",")]
@@ -35,6 +39,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
 
 @lru_cache()
