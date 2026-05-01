@@ -10,7 +10,7 @@ start "Call Rating Backend (FastAPI)" cmd /k ".venv\Scripts\uvicorn app.main:app
 
 echo [2/2] Starting Gradio UI on port 7860...
 :: Give the backend 3 seconds to start before launching the UI
-timeout /t 3 /nobreak > NUL
+ping 127.0.0.1 -n 4 > nul
 start "Call Rating UI (Gradio)" cmd /k ".venv\Scripts\python demo.py"
 
 echo.
