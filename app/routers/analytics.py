@@ -29,7 +29,7 @@ def get_ranking(
             Employee.name.label("employee_name"),
             Employee.employee_code.label("employee_code"),
             Employee.department.label("department"),
-            func.avg(Call.evaluation_score).label("avg_score"),
+            func.avg(func.coalesce(Call.overridden_score, Call.evaluation_score)).label("avg_score"),
             func.count(Call.id).label("total_calls")
         )
         .join(Call, Call.employee_id == Employee.id)

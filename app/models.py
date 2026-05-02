@@ -90,6 +90,11 @@ class Call(Base):
     strengths        = Column(JSON, nullable=True)          # list of strength strings
     weaknesses       = Column(JSON, nullable=True)          # list of weakness JSON objects
 
+    # Supervisor Review
+    overridden_score = Column(Float, nullable=True)
+    reviewer_notes   = Column(Text, nullable=True)
+    reviewed_at      = Column(DateTime(timezone=True), nullable=True)
+
     # Timestamps
     created_at       = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     processed_at     = Column(DateTime(timezone=True), nullable=True)
@@ -100,3 +105,17 @@ class Call(Base):
 
     def __repr__(self):
         return f"<Call id={self.id} status={self.status.value}>"
+
+
+class SystemLog(Base):
+    """Dedicated table for logging system-level errors like CUDA OOM."""
+    __tablename__ = "system_logs"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    call_id       = Column(Integer, nullable=True)
+    error_type    = Column(String(50), nullable=False)
+    error_message = Column(Text, nullable=False)
+    created_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    def __repr__(self):
+        return f"<SystemLog id={self.id} type={self.error_type}>"

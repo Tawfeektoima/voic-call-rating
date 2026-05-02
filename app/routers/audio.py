@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db, SessionLocal
 from app.models import Call, Employee, Campaign, CallStatus
-from app.schemas import CallUploadResponse, CallOut
+from app.schemas import CallUploadResponse, CallOut, CallReviewUpdate
 from app.config import get_settings
 from app.services.transcription import transcriber
 from app.services.evaluation import evaluate_transcript
@@ -82,4 +82,38 @@ def get_call_status(call_id: int, db: Session = Depends(get_db)):
     call = db.query(Call).filter(Call.id == call_id).first()
     if not call:
         raise HTTPException(status_code=404, detail="Call not found")
+    return call
+
+
+@router.get("/{call_id}/file")
+def get_call_audio_file(call_id: int, db: Session = Depends(get_db)):
+    """Stream the actual audio file for playback."""
+    call = db.query(Call).filter(Call.id == call_id).first()
+    if not call or not call.audio_file_path:
+        raise HTTPException(status_code=404, detail="Audio file not found")
+    
+    if not os.path.exists(call.audio_file_path):
+        raise HTTPException(status_code=404, detail="File on disk not found")
+        
+    from fastapi.responses import FileResponse
+    return FileResponse(call.audio_file_path)
+
+
+@router.patch("/{call_id}/review", response_model=CallOut)
+def review_call(
+    call_id: int, 
+    review: CallReviewUpdate, 
+    db: Session = Depends(get_db)
+):
+    """Update a call with supervisor override score and notes."""
+    call = db.query(Call).filter(Call.id == call_id).first()
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+    
+    call.overridden_score = review.overridden_score
+    call.reviewer_notes = review.reviewer_notes
+    call.reviewed_at = datetime.now(timezone.utc)
+    
+    db.commit()
+    db.refresh(call)
     return call
