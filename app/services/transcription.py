@@ -71,12 +71,9 @@ class CallTranscriber:
             # Repetition fix and VAD settings as requested
             result = model.transcribe(
                 audio, 
-                batch_size=batch_size, 
+                batch_size=batch_size,
                 chunk_size=30,
-                print_progress=True,
-                condition_on_previous_text=False, # Stops "Give me one more" loops
-                vad_filter=True, # Enable Voice Activity Detection
-                vad_params={"threshold": 0.5} # Sensitivity
+                print_progress=True
             )
             
             # Unload Whisper immediately

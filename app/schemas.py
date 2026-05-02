@@ -88,13 +88,26 @@ class CallOut(BaseModel):
     campaign_id: int
     original_filename: Optional[str]
     status: str
-    transcript: Optional[str]
-    evaluation_score: Optional[float]
-    audio_duration: Optional[float]
-    weaknesses: Optional[List[dict]]
-    error_message: Optional[str]
+    transcript: Optional[str] = None
+    reasoning: Optional[str] = None
+    evaluation_score: Optional[float] = None
+    audio_duration: Optional[float] = None
+    strengths: Optional[List[str]] = None
+    weaknesses: Optional[List[dict]] = None
+    error_message: Optional[str] = None
+    
+    # Review fields
+    overridden_score: Optional[float] = None
+    reviewer_notes: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+
     created_at: datetime
-    processed_at: Optional[datetime]
+    processed_at: Optional[datetime] = None
+
+
+class CallReviewUpdate(BaseModel):
+    overridden_score: Optional[float] = None
+    reviewer_notes: Optional[str] = None
 
 
 class CallUploadResponse(BaseModel):
@@ -102,6 +115,12 @@ class CallUploadResponse(BaseModel):
     call_id: int
     status: str = "pending"
     message: str = "Audio uploaded successfully. Processing has started in the background."
+
+
+class ScoreOverview(BaseModel):
+    average_score: float
+    total_calls: int
+    pass_rate: float
 
 
 # ===========================

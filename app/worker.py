@@ -4,7 +4,7 @@ import torch
 from celery import Celery
 from datetime import datetime, timezone
 from app.database import SessionLocal
-from app.models import Call, Campaign, CallStatus
+from app.models import Call, Campaign, CallStatus, SystemLog
 from app.services.transcription import transcriber
 from app.services.evaluation import evaluate_transcript
 from app.config import get_settings
@@ -21,6 +21,12 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     worker_max_tasks_per_child=1, # CRITICAL: Force worker restart after every task to clear VRAM
+    # --- RACE CONDITION PREVENTIONS ---
+    broker_transport_options={
+        "visibility_timeout": 3600,  # 1 hour (Prevent Redis from re-delivering long tasks)
+    },
+    task_acks_late=False,            # Acknowledge immediately to remove from queue
+    worker_prefetch_multiplier=1,    # Only take one task at a time
 )
 
 def print_worker_vram(stage: str):
@@ -49,7 +55,11 @@ def process_call_audio_task(self, call_id: int):
             print(f"[!] Background Task: Call ID {call_id} not found.")
             return
 
-        # 1. Start Processing
+        # 1. Idempotency Check & Start Processing
+        if call.status in [CallStatus.PROCESSING, CallStatus.TRANSCRIBED, CallStatus.EVALUATED]:
+            print(f"[*] Call {call_id} is already in state '{call.status.value}'. Skipping duplicate task.")
+            return
+
         call.status = CallStatus.PROCESSING
         db.commit()
 
@@ -65,6 +75,11 @@ def process_call_audio_task(self, call_id: int):
         except Exception as e:
             call.status = CallStatus.FAILED
             call.error_message = f"Transcription Error: {str(e)}"
+            
+            error_type = "CUDA_OOM" if "CUDA out of memory" in str(e) else "TRANSCRIPTION_ERROR"
+            sys_log = SystemLog(call_id=call_id, error_type=error_type, error_message=str(e))
+            db.add(sys_log)
+            
             db.commit()
             return
 
@@ -89,11 +104,21 @@ def process_call_audio_task(self, call_id: int):
         except Exception as e:
             call.status = CallStatus.FAILED
             call.error_message = f"Evaluation Error: {str(e)}"
+            
+            sys_log = SystemLog(call_id=call_id, error_type="EVALUATION_ERROR", error_message=str(e))
+            db.add(sys_log)
+            
             db.commit()
             return
 
     except Exception as e:
         print(f"[!] Unhandled background task error: {e}")
+        try:
+            sys_log = SystemLog(call_id=call_id, error_type="UNHANDLED_ERROR", error_message=str(e))
+            db.add(sys_log)
+            db.commit()
+        except:
+            pass
     finally:
         print_worker_vram(f"END-TASK - Call ID {call_id}")
         db.close()
