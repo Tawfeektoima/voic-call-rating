@@ -9,20 +9,19 @@ def get_common_weaknesses(db: Session, limit: int = 10) -> List[CommonError]:
     """
     Aggregates all weaknesses from evaluated calls to find the most common errors.
     """
-    # Fetch all weaknesses from all evaluated calls
-    calls = db.query(Call.weaknesses).filter(Call.status == CallStatus.EVALUATED).all()
+    # Fetch all weaknesses and associated employee_ids from all evaluated calls
+    calls = db.query(Call.employee_id, Call.weaknesses).filter(Call.status == CallStatus.EVALUATED).all()
     
     if not calls:
         return []
 
     category_stats = {}
     
-    for (weaknesses_json,) in calls:
+    for employee_id, weaknesses_json in calls:
         if not weaknesses_json:
             continue
             
         # weaknesses_json is a list of dicts: [{'category': '...', 'detail': '...', 'deduction': ...}]
-        # Sometimes SQLAlchemy returns string depending on dialect, but PostgreSQL JSON type usually returns dict.
         if isinstance(weaknesses_json, str):
             weaknesses_list = json.loads(weaknesses_json)
         else:
@@ -37,11 +36,13 @@ def get_common_weaknesses(db: Session, limit: int = 10) -> List[CommonError]:
                 category_stats[cat] = {
                     "count": 0,
                     "total_deduction": 0.0,
-                    "examples": set()
+                    "examples": set(),
+                    "affected_employees": set()
                 }
                 
             category_stats[cat]["count"] += 1
             category_stats[cat]["total_deduction"] += deduction
+            category_stats[cat]["affected_employees"].add(employee_id)
             if detail:
                 category_stats[cat]["examples"].add(detail)
 
@@ -52,7 +53,7 @@ def get_common_weaknesses(db: Session, limit: int = 10) -> List[CommonError]:
             CommonError(
                 category=cat,
                 occurrence_count=stats["count"],
-                affected_employees=0, # Simplifying this for now, requires deeper query to group by employee
+                affected_employees=len(stats["affected_employees"]),
                 avg_deduction=round(stats["total_deduction"] / stats["count"], 2) if stats["count"] > 0 else 0,
                 example_details=list(stats["examples"])[:3] # Keep top 3 examples
             )

@@ -12,8 +12,8 @@ class CallTranscriber:
     Uses ONLY the local Whisper Small model.
     """
     
-    def __init__(self, hf_token: str, device: str = None):
-        self.hf_token = hf_token
+    def __init__(self, hf_token: str = None, device: str = None):
+        self.hf_token = hf_token or os.getenv("HF_TOKEN")
         self.model_size = "small" # Explicitly set to small
         
         # Auto-detect device
@@ -94,8 +94,11 @@ def launch_ui():
     demo.launch(share=True)
 
 if __name__ == "__main__":
-    HF_TOKEN = "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"
+    HF_TOKEN = os.getenv("HF_TOKEN")
     
+    if not HF_TOKEN:
+        print("[!] Warning: HF_TOKEN environment variable is missing.")
+
     print("[*] Starting UI... please wait.")
     try:
         transcriber = CallTranscriber(hf_token=HF_TOKEN)

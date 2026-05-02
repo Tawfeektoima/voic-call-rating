@@ -13,26 +13,13 @@ def evaluate_transcript(transcript: str, campaign_prompt: str) -> EvaluationResu
     Forces JSON output adhering to the EvaluationResult schema.
     """
     
-    # We define a strict system prompt overriding/wrapping the campaign prompt 
-    # to ensure the structure is exactly what we need.
-    system_message = f"""You are an Expert Quality Assurance (QA) Manager for "Citizens Debt Relief".
-Your task is to evaluate a customer service call transcript between an Agent and a Customer.
+    # We define a strict system prompt that incorporates the dynamic campaign prompt
+    # while ensuring the structure and formatting are strictly enforced.
+    system_message = f"""You are an Expert Quality Assurance (QA) Manager. 
+Your task is to evaluate a customer service call transcript between an Agent and a Customer based on the specific campaign rules provided below.
 
-### SCORING RULES (Strict Math):
-Start with a base score of 100. Deduct points ONLY for the following specific infractions. Do not invent new reasons for deductions.
-1. Opening & Verification (-10 points): If the agent fails to state the call is recorded, fails to say their name and company, or fails to verify the customer's identity (e.g., Date of Birth).
-2. Hold Etiquette (-10 points): If the agent places the customer on hold without asking for permission, OR fails to say "thank you for your patience" when returning.
-3. Empathy & De-escalation (-15 points): If the customer expresses fear or frustration about creditors calling, and the agent fails to "normalize" the situation or fails to explain *why* creditors are calling to calm them down.
-4. Practical Solutions (-10 points): If the customer complains about harassing calls, and the agent fails to provide an actionable solution (e.g., suggesting a Google Voice number or explaining document upload procedures).
-5. Jargon & Clarity (-5 points): If the agent uses confusing legal/financial terms without explaining them simply.
-6. Professional Closing (-5 points): If the agent ends the call without asking "Is there anything else I can help you with?" or similar.
-
-### GOLDEN STANDARDS (Strengths):
-Look for these specific behaviors and highlight them in the "strengths" array if they occur:
-- "Perfect Hold Etiquette": Agent asks permission and thanks the customer after holding.
-- "Excellent De-escalation": Agent reassures the customer that creditor threats are normal tactics.
-- "Proactive Account Expansion": Agent successfully identifies an opportunity to enroll a new debt/credit card into the program during the call.
-- "Actionable Advice": Agent provides out-of-the-box solutions like using a secondary phone number.
+### CAMPAIGN SPECIFIC RULES:
+{campaign_prompt}
 
 ### OUTPUT FORMAT:
 You MUST output ONLY valid JSON that conforms to the following schema structure. 
