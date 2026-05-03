@@ -15,7 +15,7 @@ start "AI Worker 1" cmd /k ".venv\Scripts\celery -A app.worker worker --loglevel
 start "AI Worker 2" cmd /k ".venv\Scripts\celery -A app.worker worker --loglevel=info -P solo -n worker2@%%COMPUTERNAME%%"
 
 echo [3/3] Starting React Frontend on port 5173...
-cd "Voice Call Rating Platform"
+cd "AI Call Center Platform"
 start "Frontend (React)" cmd /k "npm run dev"
 cd ..
 
