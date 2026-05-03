@@ -6,10 +6,12 @@ from datetime import datetime, timezone
 from app.database import SessionLocal
 from app.models import Call, Campaign, CallStatus, SystemLog
 from app.services.transcription import transcriber
-from app.services.evaluation import evaluate_transcript
+from app.services.analysis import evaluate_transcript, assign_speakers
+from app.services.acoustic import AcousticAnalyzer
 from app.config import get_settings
 
 settings = get_settings()
+acoustic_analyzer = AcousticAnalyzer()
 
 # Initialize Celery
 celery_app = Celery("call_rating_worker", broker=settings.CELERY_BROKER_URL)
@@ -65,13 +67,73 @@ def process_call_audio_task(self, call_id: int):
 
         # 2. Transcribe & Diarize
         try:
-            transcript, duration = transcriber.process_audio(call.audio_file_path)
-            call.transcript = transcript
+            raw_segments, duration = transcriber.process_audio(call.audio_file_path)
             call.audio_duration = duration
+            
+            # 2a. Memory Flush after Diarization (VRAM De-fragmentation)
+            print("[*] Diarization complete. Flushing VRAM before Acoustic Analysis...")
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            # 2b. Acoustic Emotion Analysis
+            print(f"[*] Starting acoustic emotion analysis for Call {call_id}...")
+            # analyze_segments takes the raw segments with timestamps
+            emotion_timeline = acoustic_analyzer.analyze_segments(call.audio_file_path, raw_segments)
+            call.emotion_timeline = emotion_timeline
+            
+            # 2c. Semantic Speaker Assignment
+            print(f"[*] Assigning roles for Call {call_id}...")
+            speaker_map = assign_speakers(raw_segments)
+            call.speaker_map = speaker_map
+            
+            # Correct speakers in emotion_timeline for UI coloring
+            for point in emotion_timeline:
+                original_spk = point.get("speaker", "UNKNOWN")
+                point["speaker"] = speaker_map.get(original_spk, "Customer").lower()
+            call.emotion_timeline = emotion_timeline
+            
+            # 2d. Build Enriched Structured Transcript & Calculate Talk Times
+            enriched_transcript = []
+            agent_time = 0.0
+            customer_time = 0.0
+            
+            for i, seg in enumerate(raw_segments):
+                # Match emotion result to this segment
+                emotion = "calm"
+                if i < len(emotion_timeline):
+                    emotion = emotion_timeline[i]["emotion"]
+                
+                original_speaker = seg.get("speaker", "UNKNOWN")
+                role = speaker_map.get(original_speaker, "Customer")
+                
+                # Create structured segment
+                segment_obj = {
+                    "id": str(i),
+                    "start": round(seg.get("start", 0.0), 2),
+                    "end": round(seg.get("end", 0.0), 2),
+                    "speaker": role.lower(), # Store as 'agent' or 'customer'
+                    "text": seg.get("text", "").strip(),
+                    "emotion": emotion
+                }
+                enriched_transcript.append(segment_obj)
+                
+                # Calculate talk durations
+                seg_dur = segment_obj["end"] - segment_obj["start"]
+                if role == "Agent":
+                    agent_time += seg_dur
+                else:
+                    customer_time += seg_dur
+            
+            call.transcript = enriched_transcript
+            call.agent_talk_time = round(agent_time, 2)
+            call.customer_talk_time = round(customer_time, 2)
+            
             call.status = CallStatus.TRANSCRIBED
             db.commit()
-            print(f"[*] Transcription complete for Call {call_id}")
-            print_worker_vram(f"POST-TRANSCRIPTION - Call ID {call_id}")
+            print(f"[*] Transcription and Emotion synchronization complete for Call {call_id}")
+            print_worker_vram(f"POST-TRANSCRIPTION & EMOTION - Call ID {call_id}")
         except Exception as e:
             call.status = CallStatus.FAILED
             call.error_message = f"Transcription Error: {str(e)}"
@@ -90,9 +152,16 @@ def process_call_audio_task(self, call_id: int):
             if not campaign:
                 raise ValueError("Campaign not found for evaluation.")
 
-            eval_result = evaluate_transcript(call.transcript, campaign.evaluation_prompt)
+            # Convert structured transcript back to string for LLM evaluation
+            llm_transcript = "\n".join([
+                f"[{s['start']:05.2f} - {s['end']:05.2f}] {s['speaker']}: {s['text']}"
+                for s in call.transcript
+            ])
+
+            eval_result = evaluate_transcript(llm_transcript, campaign.evaluation_prompt)
             
             call.reasoning = eval_result.reasoning
+            call.call_summary = eval_result.summary
             call.evaluation_score = eval_result.score
             call.strengths = eval_result.strengths
             call.weaknesses = [w.model_dump() for w in eval_result.weaknesses]
@@ -100,6 +169,14 @@ def process_call_audio_task(self, call_id: int):
             call.processed_at = datetime.now(timezone.utc)
             db.commit()
             print(f"[*] Evaluation complete for Call {call_id}. Score: {eval_result.score}")
+            
+            # --- Cumulative Skill Aggregation (Task 56) ---
+            try:
+                from app.services.aggregation import update_agent_mastery_stats
+                update_agent_mastery_stats(db, call.employee_id)
+                print(f"[*] Cumulative skills updated for Agent {call.employee_id}")
+            except Exception as agg_err:
+                print(f"[!] Error updating cumulative stats: {agg_err}")
             
         except Exception as e:
             call.status = CallStatus.FAILED

@@ -10,8 +10,10 @@ from app.models import Call, Employee, Campaign, CallStatus
 from app.schemas import CallUploadResponse, CallOut, CallReviewUpdate
 from app.config import get_settings
 from app.services.transcription import transcriber
-from app.services.evaluation import evaluate_transcript
+from app.services.analysis import evaluate_transcript
 from app.worker import process_call_audio_task
+from app.routers.auth import get_current_user
+from app.models import UserRole
 
 settings = get_settings()
 
@@ -27,11 +29,16 @@ async def upload_audio(
     employee_id: int = Form(...),
     campaign_id: int = Form(...),
     file: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
 ):
     """
     Upload an audio file. Validates size/format, saves locally, and triggers processing.
     """
+    # 0. Role Check: Agent can only upload for themselves
+    if current_user.role == UserRole.AGENT and current_user.id != employee_id:
+        raise HTTPException(status_code=403, detail="Agents can only upload calls for themselves.")
+
     # 1. Validate relations
     employee = db.query(Employee).filter(Employee.id == employee_id).first()
     if not employee:
@@ -77,20 +84,37 @@ async def upload_audio(
 
 
 @router.get("/{call_id}", response_model=CallOut)
-def get_call_status(call_id: int, db: Session = Depends(get_db)):
+def get_call_status(
+    call_id: int, 
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
+):
     """Retrieve the status and results of a call."""
     call = db.query(Call).filter(Call.id == call_id).first()
     if not call:
         raise HTTPException(status_code=404, detail="Call not found")
+    
+    # Role Check
+    if current_user.role == UserRole.AGENT and call.employee_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You do not have permission to view this call.")
+        
     return call
 
 
 @router.get("/{call_id}/file")
-def get_call_audio_file(call_id: int, db: Session = Depends(get_db)):
+def get_call_audio_file(
+    call_id: int, 
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
+):
     """Stream the actual audio file for playback."""
     call = db.query(Call).filter(Call.id == call_id).first()
     if not call or not call.audio_file_path:
         raise HTTPException(status_code=404, detail="Audio file not found")
+    
+    # Role Check
+    if current_user.role == UserRole.AGENT and call.employee_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You do not have permission to access this file.")
     
     if not os.path.exists(call.audio_file_path):
         raise HTTPException(status_code=404, detail="File on disk not found")
@@ -103,9 +127,14 @@ def get_call_audio_file(call_id: int, db: Session = Depends(get_db)):
 def review_call(
     call_id: int, 
     review: CallReviewUpdate, 
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
 ):
     """Update a call with supervisor override score and notes."""
+    # Role Check: Only QA and Admin can review calls
+    if current_user.role == UserRole.AGENT:
+        raise HTTPException(status_code=403, detail="Agents cannot review calls.")
+
     call = db.query(Call).filter(Call.id == call_id).first()
     if not call:
         raise HTTPException(status_code=404, detail="Call not found")
@@ -114,6 +143,27 @@ def review_call(
     call.reviewer_notes = review.reviewer_notes
     call.reviewed_at = datetime.now(timezone.utc)
     
+    db.commit()
+    db.refresh(call)
+    return call
+
+
+@router.patch("/{call_id}/lead-status", response_model=CallOut)
+def update_lead_status(
+    call_id: int,
+    status: str,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
+):
+    # Role Check
+    if current_user.role == UserRole.AGENT:
+        raise HTTPException(status_code=403, detail="Agents cannot update lead status.")
+
+    call = db.query(Call).filter(Call.id == call_id).first()
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+
+    call.lead_status = status.lower()
     db.commit()
     db.refresh(call)
     return call

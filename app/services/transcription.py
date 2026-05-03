@@ -111,22 +111,24 @@ class CallTranscriber:
                     torch.cuda.empty_cache()
                 self._print_vram_usage("AFTER DIARIZATION UNLOAD")
             
-            # 6. Format output
-            transcript = self._format_transcript(result.get("segments", []))
-            return transcript, duration
+            # 6. Return raw segments for enrichment
+            return result.get("segments", []), duration
             
         finally:
             self._print_vram_usage("END")
 
-    def _format_transcript(self, segments: List[Dict[str, Any]]) -> str:
+    def _build_structured_transcript(self, segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         output = []
-        for segment in segments:
-            speaker = segment.get("speaker", "UNKNOWN")
-            start = segment.get("start", 0.0)
-            end = segment.get("end", 0.0)
-            text = segment.get("text", "").strip()
-            output.append(f"[{start:05.2f} - {end:05.2f}] {speaker}: {text}")
-        return "\n".join(output)
+        for i, segment in enumerate(segments):
+            output.append({
+                "id": str(i),
+                "start": segment.get("start", 0.0),
+                "end": segment.get("end", 0.0),
+                "speaker": segment.get("speaker", "UNKNOWN"),
+                "text": segment.get("text", "").strip(),
+                "emotion": "calm"
+            })
+        return output
 
 # Singleton instance for the app to reuse
 transcriber = CallTranscriber()
