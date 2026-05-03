@@ -17,6 +17,9 @@ python-dotenv==1.0.1
 # PyTorch with CUDA — install separately via:
 #   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 whisperx @ git+https://github.com/m-bain/whisperX.git
+transformers>=4.30.0
+librosa
+scipy
 
 # === Groq LLM ===
 groq==0.11.0
@@ -25,3 +28,5 @@ groq==0.11.0
 httpx==0.27.2
 celery==5.4.0
 redis==5.0.8
+python-jose[cryptography]
+passlib[bcrypt]
