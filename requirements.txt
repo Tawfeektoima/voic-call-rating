@@ -30,3 +30,7 @@ celery==5.4.0
 redis==5.0.8
 python-jose[cryptography]
 passlib[bcrypt]
+pandas
+openpyxl
+psutil>=5.9.0
+pynvml>=11.5.0

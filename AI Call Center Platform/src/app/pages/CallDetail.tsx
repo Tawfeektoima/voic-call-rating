@@ -81,7 +81,10 @@ export function CallDetail() {
   const isProcessing = call.status === CallStatus.PENDING || call.status === CallStatus.PROCESSING;
   const leadC = call.lead_status ? (leadConfig as any)[call.lead_status] : null;
   const score = call.overridden_score ?? call.evaluation_score ?? 0;
-  const silenceSeconds = (call.audio_duration || 0) - (call.agent_talk_time || 0) - (call.customer_talk_time || 0);
+  
+  const agentTime = call.outcome?.agent_talk_time ?? call.agent_talk_time ?? 0;
+  const customerTime = call.outcome?.customer_talk_time ?? call.customer_talk_time ?? 0;
+  const silenceSeconds = (call.audio_duration || 0) - agentTime - customerTime;
 
   return (
     <div className="p-6 space-y-5">
@@ -129,20 +132,36 @@ export function CallDetail() {
           </div>
         </div>
 
-        {/* QA Score Badge */}
-        {!isProcessing && (
-          <div className={cn(
-            'flex flex-col items-center px-4 py-3 rounded-xl border flex-shrink-0',
-            score >= 85 ? 'bg-emerald-500/10 border-emerald-500/20' :
-            score >= 70 ? 'bg-amber-500/10 border-amber-500/20' : 'bg-red-500/10 border-red-500/20'
-          )}>
-            <span className={cn(
-              'text-2xl font-bold',
-              score >= 85 ? 'text-emerald-400' : score >= 70 ? 'text-amber-400' : 'text-red-400'
-            )}>{score}</span>
-            <span className="text-muted-foreground text-xs">QA Score</span>
-          </div>
-        )}
+        <div className="flex items-center gap-4 flex-shrink-0">
+          {/* Outcome Badge */}
+          {!isProcessing && call.outcome && call.outcome.primary_outcome && (
+            <div className="flex flex-col items-end px-4 py-3 rounded-xl border bg-secondary/50 border-border">
+              <span className="text-sm font-semibold text-foreground">
+                {call.outcome.primary_outcome}
+              </span>
+              {call.outcome.outcome_value != null && call.outcome.outcome_value > 0 && (
+                <span className="text-xs text-emerald-400 font-bold mt-1">
+                  ${call.outcome.outcome_value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* QA Score Badge */}
+          {!isProcessing && (
+            <div className={cn(
+              'flex flex-col items-center px-4 py-3 rounded-xl border flex-shrink-0',
+              score >= 85 ? 'bg-emerald-500/10 border-emerald-500/20' :
+              score >= 70 ? 'bg-amber-500/10 border-amber-500/20' : 'bg-red-500/10 border-red-500/20'
+            )}>
+              <span className={cn(
+                'text-2xl font-bold',
+                score >= 85 ? 'text-emerald-400' : score >= 70 ? 'text-amber-400' : 'text-red-400'
+              )}>{score}</span>
+              <span className="text-muted-foreground text-xs">QA Score</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Processing State Indicator */}
@@ -222,10 +241,34 @@ export function CallDetail() {
             {/* Left: Talk/Listen + Summary */}
             <div className="space-y-5">
               <TalkListenGauge
-                agentSeconds={call.agent_talk_time || 0}
-                customerSeconds={call.customer_talk_time || 0}
+                agentSeconds={agentTime}
+                customerSeconds={customerTime}
                 silenceSeconds={Math.max(0, silenceSeconds)}
               />
+
+              {/* Campaign Specific Insights */}
+              {!isProcessing && call.outcome?.campaign_specific_data && Object.keys(call.outcome.campaign_specific_data).length > 0 && (
+                <div className="bg-card border border-border rounded-xl p-5 mb-5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Target size={14} className="text-primary" />
+                    <span className="text-foreground text-sm font-semibold">Business Insights</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    {Object.entries(call.outcome.campaign_specific_data).map(([key, value]) => {
+                      const displayKey = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                      let displayValue = String(value);
+                      if (typeof value === 'boolean') displayValue = value ? 'Yes' : 'No';
+                      
+                      return (
+                        <div key={key} className="bg-secondary/30 rounded-lg p-2.5">
+                          <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">{displayKey}</p>
+                          <p className="text-xs font-medium text-foreground">{displayValue}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* AI Summary */}
               <div className="bg-card border border-border rounded-xl p-5">
