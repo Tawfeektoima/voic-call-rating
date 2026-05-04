@@ -90,11 +90,13 @@ class Employee(Base):
     skills     = Column(JSON, nullable=True) # e.g. {"empathy": 80, "resolution": 75}
     phone_number = Column(String(50), nullable=True)
     emotion_history = Column(JSON, nullable=True) # e.g. [65, 70, 72, 68]
+    agent_tenure_days = Column(Integer, nullable=True) # (Task 65)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     calls = relationship("Call", back_populates="employee", lazy="dynamic")
     mastery_stats = relationship("AgentMasteryStats", back_populates="employee", uselist=False, cascade="all, delete-orphan")
+    coaching_sessions = relationship("CoachingSession", back_populates="employee", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Employee id={self.id} name={self.name!r}>"
@@ -156,6 +158,21 @@ class Call(Base):
     emotion_timeline    = Column(JSON, nullable=True)     # e.g. [{"time": 5, "emotion": "positive"}]
     speaker_map         = Column(JSON, nullable=True)     # e.g. {"SPEAKER_00": "Agent", "SPEAKER_01": "Customer"}
 
+    # Intelligence Hub Additions (Task 65)
+    call_datetime       = Column(DateTime(timezone=True), nullable=True)
+    call_hour           = Column(Integer, nullable=True)
+    call_day_of_week    = Column(String(20), nullable=True)
+    calls_before_this   = Column(Integer, nullable=True)
+    filler_words_count  = Column(Integer, default=0)
+    interruptions_count = Column(Integer, default=0)
+    avg_response_time_sec = Column(Float, nullable=True)
+
+    # Compliance Flags (Task 66)
+    opening_ok          = Column(Boolean, default=False)
+    closing_ok          = Column(Boolean, default=False)
+    dob_verified        = Column(Boolean, default=False)
+    de_escalation_success = Column(Boolean, default=False)
+
     # Timestamps
     created_at       = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     processed_at     = Column(DateTime(timezone=True), nullable=True)
@@ -163,9 +180,92 @@ class Call(Base):
     # Relationships
     employee = relationship("Employee", back_populates="calls")
     campaign = relationship("Campaign", back_populates="calls")
+    outcome  = relationship("CallOutcome", back_populates="call", uselist=False, cascade="all, delete-orphan")
+    qa_pairs = relationship("CallQAPair", back_populates="call", cascade="all, delete-orphan")
+    annotations = relationship("CallAnnotation", back_populates="call", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Call id={self.id} status={self.status.value}>"
+
+
+class CallOutcome(Base):
+    """Business intelligence outcomes extracted from a call evaluation."""
+    __tablename__ = "call_outcomes"
+
+    id                    = Column(Integer, primary_key=True, index=True)
+    call_id               = Column(Integer, ForeignKey("calls.id"), unique=True, nullable=False, index=True)
+
+    # Common Outcome Fields
+    campaign_type         = Column(String(50), nullable=False)
+    primary_outcome       = Column(String(255), nullable=True)
+    outcome_value         = Column(Float, nullable=True)
+    follow_up_required    = Column(Boolean, default=False, nullable=False)
+    follow_up_date        = Column(DateTime(timezone=True), nullable=True)
+
+    # Programmatic Talk-Time KPIs
+    agent_talk_time       = Column(Float, nullable=True)
+    customer_talk_time    = Column(Float, nullable=True)
+    talk_ratio            = Column(Float, nullable=True)
+
+    # Flexible Campaign-Specific Data (JSON blob)
+    campaign_specific_data = Column(JSON, nullable=True)
+
+    created_at            = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    call = relationship("Call", back_populates="outcome")
+
+    def __repr__(self):
+        return f"<CallOutcome id={self.id} call_id={self.call_id} type={self.campaign_type}>"
+
+
+class CallQAPair(Base):
+    """Objection/Response pairs for RAG and training (Task 65)."""
+    __tablename__ = "call_qa_pairs"
+
+    id                    = Column(Integer, primary_key=True, index=True)
+    call_id               = Column(Integer, ForeignKey("calls.id"), nullable=False, index=True)
+    objection             = Column(Text, nullable=False)
+    response              = Column(Text, nullable=False)
+    customer_emotion_at   = Column(String(50), nullable=True)
+    customer_emotion_after = Column(String(50), nullable=True)
+    is_golden_response    = Column(Boolean, default=False)
+    created_at            = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    call = relationship("Call", back_populates="qa_pairs")
+
+
+class CallAnnotation(Base):
+    """Timestamped supervisor notes and tags (Task 65)."""
+    __tablename__ = "call_annotations"
+
+    id                    = Column(Integer, primary_key=True, index=True)
+    call_id               = Column(Integer, ForeignKey("calls.id"), nullable=False, index=True)
+    timestamp             = Column(Float, nullable=False) # seconds into call
+    note                  = Column(Text, nullable=False)
+    tag                   = Column(String(50), nullable=True) # best_practice, mistake, etc.
+    created_at            = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    call = relationship("Call", back_populates="annotations")
+
+
+class CoachingSession(Base):
+    """Training sessions for agents and their impact (Task 65)."""
+    __tablename__ = "coaching_sessions"
+
+    id                    = Column(Integer, primary_key=True, index=True)
+    employee_id           = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    date                  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    topic                 = Column(String(255), nullable=False)
+    score_before          = Column(Float, nullable=True) # Avg score before session
+    score_after           = Column(Float, nullable=True)  # Avg score after session
+    notes                 = Column(Text, nullable=True)
+    created_at            = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    employee = relationship("Employee", back_populates="coaching_sessions")
 
 
 class AgentMasteryStats(Base):

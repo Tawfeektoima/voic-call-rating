@@ -38,14 +38,34 @@ class AcousticAnalyzer:
         if self.model is not None:
             return
 
+        # --- Dynamic Device Selection based on VRAM (Task 62-D) ---
+        target_device = "cuda" if torch.cuda.is_available() else "cpu"
+        if target_device == "cuda":
+            try:
+                free_mem, _ = torch.cuda.mem_get_info()
+                free_gb = free_mem / (1024**3)
+                if free_gb < 2.0:
+                    print(f"[!] Warning: Low VRAM ({free_gb:.2f} GB). Forcing Acoustic Model to CPU.")
+                    target_device = "cpu"
+            except Exception:
+                pass
+        
+        self.device = target_device
+
         # Clear cache before loading to ensure space for the acoustic model
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
 
         try:
             print(f"[*] Lazy Loading Acoustic Model '{self.model_name}' on {self.device}...")
             self.feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(self.model_name)
-            self.model = Wav2Vec2ForSequenceClassification.from_pretrained(self.model_name, use_safetensors=True).to(self.device)
+            # Explicitly disable gradient_checkpointing for inference (Task 62-D)
+            self.model = Wav2Vec2ForSequenceClassification.from_pretrained(
+                self.model_name, 
+                use_safetensors=True,
+                gradient_checkpointing=False
+            ).to(self.device)
             self.model.eval()
             self.id2label = self.model.config.id2label
         except Exception as e:
@@ -90,8 +110,12 @@ class AcousticAnalyzer:
         emotion_timeline = []
         
         # 3. Process each segment
+        total_segments = len(segments)
         with torch.no_grad():
-            for segment in segments:
+            for idx, segment in enumerate(segments):
+                if idx % 5 == 0:
+                    print(f"[*] Acoustic Analysis Heartbeat: Processing segment {idx+1}/{total_segments}...")
+                
                 start_sec = segment.get("start", 0)
                 end_sec = segment.get("end", start_sec + 1)
                 
@@ -141,5 +165,6 @@ class AcousticAnalyzer:
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
             
         return emotion_timeline

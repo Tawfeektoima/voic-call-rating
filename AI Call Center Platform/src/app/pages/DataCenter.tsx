@@ -45,10 +45,10 @@ const exportTypes = [
 ];
 
 const csvFields = [
-  { category: 'Acoustic', fields: ['Call Duration (s)', 'Agent Talk Time', 'Customer Talk Time', 'Silence Ratio', 'Avg Decibel Level', 'Emotion Distribution'] },
+  { category: 'Acoustic', fields: ['Call Duration (s)', 'Agent Talk Time', 'Customer Talk Time', 'Talk Ratio', 'Silence Ratio', 'Avg Decibel Level', 'Emotion Distribution'] },
   { category: 'Semantic', fields: ['QA Score', 'Objection Count', 'Sentiment Score', 'Key Topics', 'Compliance Flags', 'PII Segments Count'] },
-  { category: 'Business', fields: ['Lead Status', 'Campaign Type', 'Agent ID', 'Resolution Outcome', 'Follow-up Booked', 'Conversion Signal'] },
-  { category: 'Metadata', fields: ['Call ID', 'Timestamp', 'Campaign ID', 'Groq Inference Time', 'Is Golden Moment', 'Tags'] },
+  { category: 'Business', fields: ['Lead Status', 'Campaign Type', 'Primary Outcome', 'Outcome Value', 'Follow-up Required', 'Follow-up Date'] },
+  { category: 'Metadata', fields: ['Call ID', 'Timestamp', 'Campaign ID', 'Agent ID', 'Is Golden Moment', 'Tags', 'Campaign Specific Data'] },
 ];
 
 function ExportCard({ config, onExport, isExporting }: {

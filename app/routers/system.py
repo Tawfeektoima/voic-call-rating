@@ -4,6 +4,19 @@ from sqlalchemy import func
 from typing import List
 from datetime import datetime, timedelta, timezone
 import random
+import time
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+
+try:
+    import pynvml
+    pynvml.nvmlInit()
+    NVML_AVAILABLE = True
+except Exception:
+    NVML_AVAILABLE = False
 
 from app.database import get_db
 from app.models import SystemLog, Call, CallStatus, UserRole, Employee
@@ -27,11 +40,38 @@ def get_system_metrics(
     processing_count = db.query(func.count(Call.id)).filter(Call.status == CallStatus.PROCESSING).scalar()
     pending_count = db.query(func.count(Call.id)).filter(Call.status == CallStatus.PENDING).scalar()
     
-    # Mock some dynamic metrics for hardware (simulating real sensors)
-    gpu_load = random.uniform(20.0, 85.0)
-    cpu_load = random.uniform(10.0, 45.0)
+    # Hardware metrics with fallbacks
+    cpu_load = 0.0
+    uptime_hours = 0.0
+    if PSUTIL_AVAILABLE:
+        try:
+            cpu_load = psutil.cpu_percent(interval=None)
+            uptime_seconds = time.time() - psutil.boot_time()
+            uptime_hours = uptime_seconds / 3600.0
+        except Exception:
+            pass
+
+    gpu_load = 0.0
+    if NVML_AVAILABLE:
+        try:
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            res = pynvml.nvmlDeviceGetUtilizationRates(handle)
+            gpu_load = float(res.gpu)
+        except Exception:
+            gpu_load = 0.0
+
     inf_time = random.randint(450, 1200)
     
+    # Disk Usage Monitor (Task 62-G)
+    disk_usage_pct = 0.0
+    if PSUTIL_AVAILABLE:
+        try:
+            # Check disk usage where the project is located
+            disk_info = psutil.disk_usage('.')
+            disk_usage_pct = disk_info.percent
+        except Exception:
+            pass
+
     # Generate history for charts
     gpu_history = []
     inf_history = []
@@ -47,7 +87,8 @@ def get_system_metrics(
         inference_time=inf_time,
         calls_processing=processing_count + pending_count, # Matches Dashboard Queue Depth
         queue_depth=pending_count,
-        uptime=168.5, # Mock static for now
+        uptime=round(uptime_hours, 1),
+        disk_usage=round(disk_usage_pct, 1),
         gpu_history=gpu_history,
         inference_history=inf_history
     )

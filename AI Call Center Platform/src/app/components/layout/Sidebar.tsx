@@ -15,6 +15,7 @@ const navItems = [
   { path: '/success-library', label: 'Success Library', icon: Star, roles: ['admin', 'manager', 'qa', 'agent'] },
   { path: '/agents/a1', label: 'Agent Profiles', agentLabel: 'My Profile', icon: Users, roles: ['admin', 'manager', 'qa', 'agent'] },
   { path: '/data-center', label: 'Data Center', icon: Database, roles: ['admin', 'manager'] },
+  { path: '/hr', label: 'HR Management', icon: UserCircle, roles: ['admin', 'hr_manager'] },
   { path: '/system-health', label: 'System Health', icon: Activity, roles: ['admin'] },
 ];
 
@@ -23,6 +24,7 @@ const roleColors = {
   manager: 'from-cyan-500 to-blue-500',
   qa: 'from-emerald-500 to-teal-500',
   agent: 'from-amber-500 to-orange-500',
+  hr_manager: 'from-fuchsia-500 to-pink-500',
 };
 
 const roleLabels = {
@@ -30,6 +32,7 @@ const roleLabels = {
   manager: 'Manager',
   qa: 'QA Analyst',
   agent: 'Agent',
+  hr_manager: 'HR Manager',
 };
 
 export function Sidebar() {
