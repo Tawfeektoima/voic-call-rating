@@ -53,17 +53,19 @@ async def upload_audio(
     if ext not in settings.allowed_extensions_list:
         raise HTTPException(status_code=400, detail=f"Invalid file type. Allowed: {settings.ALLOWED_EXTENSIONS}")
 
-    # Read file content to check size and save
-    file_content = await file.read()
-    if len(file_content) > settings.max_file_size_bytes:
-        raise HTTPException(status_code=400, detail=f"File exceeds max size of {settings.MAX_FILE_SIZE_MB}MB")
-
-    # 3. Save locally
+    # 3. Save locally using streaming
     unique_filename = f"{uuid.uuid4().hex}{ext}"
     file_path = os.path.join(settings.UPLOAD_DIR, unique_filename)
     
+    saved_size = 0
     with open(file_path, "wb") as f:
-        f.write(file_content)
+        while chunk := await file.read(1024 * 1024):  # 1MB chunks
+            saved_size += len(chunk)
+            if saved_size > settings.max_file_size_bytes:
+                f.close()
+                os.remove(file_path)
+                raise HTTPException(status_code=400, detail=f"File exceeds max size of {settings.MAX_FILE_SIZE_MB}MB")
+            f.write(chunk)
 
     # 4. Create DB Record
     new_call = Call(

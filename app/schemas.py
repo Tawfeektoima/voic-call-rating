@@ -49,6 +49,8 @@ class EmployeeOut(BaseModel):
     tier: str
     skills: Optional[dict]
     emotion_history: Optional[List[float]]
+    phone_number: Optional[str] = None
+    agent_tenure_days: Optional[int] = 0
     mastery_stats: Optional[AgentMasteryOut] = None
     created_at: datetime
 
@@ -100,11 +102,13 @@ class CampaignOut(BaseModel):
 #  Groq Evaluation Schemas
 # ===========================
 
-class WeaknessItem(BaseModel):
-    """A single weakness found during the call evaluation."""
-    issue: str = Field(..., description="Short label for the problem, e.g. 'Greeting', 'Hold Etiquette'")
-    detail: str = Field(..., description="Explanation of what was wrong")
-    deduction: float = Field(..., ge=0, description="Points deducted for this weakness")
+class QAPairItem(BaseModel):
+    """Objection/Response pair for RAG (Task 65)."""
+    objection: str = Field(..., description="The customer objection or critical question")
+    response: str = Field(..., description="The agent's response to the objection")
+    customer_emotion_at: str = Field(default="neutral", description="Customer emotion during the objection")
+    customer_emotion_after: str = Field(default="neutral", description="Customer emotion after the agent's response")
+    is_golden: bool = Field(default=False, description="Whether this response is considered an ideal 'Golden' response")
 
 
 class EvaluationResult(BaseModel):
@@ -121,6 +125,24 @@ class EvaluationResult(BaseModel):
     )
     summary: str = Field(default="", description="One-paragraph overall assessment of the call")
 
+    # --- RAG Core (Task 65) ---
+    qa_pairs: List[QAPairItem] = Field(
+        default_factory=list, 
+        description="Extract all objection/response pairs found in the call"
+    )
+
+    # --- Compliance Flags (Task 66) ---
+    opening_ok: bool = Field(default=False, description="Whether the agent used the correct opening")
+    closing_ok: bool = Field(default=False, description="Whether the agent used the correct closing")
+    dob_verified: bool = Field(default=False, description="Whether Date of Birth was verified (if applicable)")
+
+    # --- Business Intelligence Outcome Fields ---
+    primary_outcome: Optional[str] = Field(default=None, description="Primary business outcome of the call")
+    outcome_value: Optional[float] = Field(default=None, description="Monetary or numeric value of the outcome")
+    follow_up_required: bool = Field(default=False, description="Whether a follow-up action is required")
+    follow_up_date: Optional[str] = Field(default=None, description="Suggested follow-up date if applicable (ISO format)")
+    campaign_specific_data: Optional[dict] = Field(default=None, description="Campaign-type-specific extracted fields")
+
 
 # ===========================
 #  Call Schemas
@@ -133,6 +155,24 @@ class TranscriptSegmentSchema(BaseModel):
     speaker: str
     text: str
     emotion: Optional[str] = "calm"
+
+class CallOutcomeOut(BaseModel):
+    """Serialization schema for CallOutcome records."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    call_id: int
+    campaign_type: str
+    primary_outcome: Optional[str] = None
+    outcome_value: Optional[float] = None
+    follow_up_required: bool = False
+    follow_up_date: Optional[datetime] = None
+    agent_talk_time: Optional[float] = None
+    customer_talk_time: Optional[float] = None
+    talk_ratio: Optional[float] = None
+    campaign_specific_data: Optional[dict] = None
+    created_at: datetime
+
 
 class CallOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -176,6 +216,9 @@ class CallOut(BaseModel):
     is_golden_moment: bool = False
     call_summary: Optional[str] = None
     emotion_timeline: Optional[List[dict]] = None
+
+    # Business Intelligence Outcome (One-to-One)
+    outcome: Optional[CallOutcomeOut] = None
 
 
 class CallReviewUpdate(BaseModel):
@@ -249,6 +292,7 @@ class SystemMetrics(BaseModel):
     calls_processing: int
     queue_depth: int
     uptime: float
+    disk_usage: float
     gpu_history: List[SystemMetricPoint]
     inference_history: List[SystemMetricPoint]
 

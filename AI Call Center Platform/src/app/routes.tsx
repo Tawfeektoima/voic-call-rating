@@ -9,6 +9,7 @@ import { SuccessLibrary } from './pages/SuccessLibrary';
 import { AgentProfile } from './pages/AgentProfile';
 import { DataCenter } from './pages/DataCenter';
 import { SystemHealth } from './pages/SystemHealth';
+import { HRManagement } from './pages/HRManagement';
 import { Login } from './pages/Login';
 import { RoleGuard } from './components/auth/RoleGuard';
 import { UserRole } from './lib/types';
@@ -40,6 +41,7 @@ export const router = createBrowserRouter([
       { path: 'agents/:id', Component: AgentProfile },
       { path: 'data-center', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.MANAGER]}><DataCenter /></RoleGuard> },
       { path: 'system-health', element: <RoleGuard allowedRoles={[UserRole.ADMIN]}><SystemHealth /></RoleGuard> },
+      { path: 'hr', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.HR_MANAGER]}><HRManagement /></RoleGuard> },
       { path: '*', Component: NotFound },
     ],
   },

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Flame, Thermometer, Snowflake, DollarSign, Phone, TrendingUp,
-  ChevronRight, BarChart3, Users, Trophy, ArrowUpRight
+  ChevronRight, BarChart3, Users, Trophy, ArrowUpRight, Target
 } from 'lucide-react';
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer,
@@ -100,15 +100,32 @@ export function BusinessIntelligence() {
 
   const filteredLeads = !leads ? [] : activeLeadFilter === 'all' ? leads : leads.filter(l => l.lead_status === activeLeadFilter);
   
-  // Pipeline value logic: (avg score / 10) * base value
-  const calculateValue = (l: Call) => {
-    const score = l.overridden_score ?? l.evaluation_score ?? 0;
-    const base = l.lead_status === 'hot' ? 10000 : l.lead_status === 'warm' ? 5000 : 1000;
-    return (score / 100) * base;
-  };
+  // --- Dynamic KPIs ---
+  // Sales Conversion Rate
+  const salesCalls = leads?.filter(l => l.outcome?.campaign_type === 'sales') || [];
+  const salesClosedCount = salesCalls.filter(l => l.outcome?.primary_outcome === 'Sale Closed').length;
+  const salesConversionRate = salesCalls.length > 0 ? (salesClosedCount / salesCalls.length) * 100 : 0;
 
-  const totalPipeline = leads?.reduce((s, l) => s + calculateValue(l), 0) || 0;
-  const hotPipeline = leads?.filter(l => l.lead_status === 'hot').reduce((s, l) => s + calculateValue(l), 0) || 0;
+  // Collections PTP Rate
+  const collectionsCalls = leads?.filter(l => l.outcome?.campaign_type === 'collections') || [];
+  const ptpCount = collectionsCalls.filter(l => l.outcome?.primary_outcome === 'Promise to Pay').length;
+  const ptpRate = collectionsCalls.length > 0 ? (ptpCount / collectionsCalls.length) * 100 : 0;
+
+  // Revenue Tracking
+  const totalValueGenerated = leads?.reduce((s, l) => s + (l.outcome?.outcome_value || 0), 0) || 0;
+
+  // Talk Ratio Leaderboard
+  // Target talk ratio is 40% (0.4) for Sales
+  const talkRatioData = agents?.map(a => {
+    const agentCalls = leads?.filter(l => l.employee_id === a.id && l.outcome?.talk_ratio != null) || [];
+    if (agentCalls.length === 0) return null;
+    const avgRatio = agentCalls.reduce((s, l) => s + (l.outcome!.talk_ratio || 0), 0) / agentCalls.length;
+    const distanceToTarget = Math.abs(0.4 - avgRatio);
+    return { name: a.name.split(' ')[0], ratio: avgRatio * 100, distance: distanceToTarget };
+  }).filter(Boolean).sort((a, b) => a!.distance - b!.distance) || [];
+
+  // Used for Lead Status Tracker values (fallback if no outcome value)
+  const calculateValue = (l: Call) => l.outcome?.outcome_value || 0;
 
   const performanceData = (ranking || []).map(r => ({
     name: r.employee_name.split(' ')[0],
@@ -130,7 +147,7 @@ export function BusinessIntelligence() {
       <p className="text-muted-foreground text-xs">Business performance metrics and agent intelligence</p>
 
       {/* BI Summary KPIs - Admin only note for financials */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className={cn("grid gap-4", isAdmin ? "grid-cols-2 md:grid-cols-5" : "grid-cols-2 md:grid-cols-4")}>
         <div className="bg-card border border-border rounded-xl p-4">
           <div className="flex items-center gap-2 mb-2">
             <Users size={16} className="text-primary" />
@@ -158,18 +175,26 @@ export function BusinessIntelligence() {
             <div className="bg-card border border-border rounded-xl p-4">
               <div className="flex items-center gap-2 mb-2">
                 <DollarSign size={16} className="text-emerald-400" />
-                <span className="text-xs text-muted-foreground">Pipeline Value</span>
+                <span className="text-xs text-muted-foreground">Total Value Generated</span>
               </div>
-              <p className="text-foreground text-xl font-semibold">${(totalPipeline / 1000).toFixed(0)}K</p>
-              <p className="text-xs text-muted-foreground mt-1">All active leads</p>
+              <p className="text-foreground text-xl font-semibold">${totalValueGenerated.toLocaleString()}</p>
+              <p className="text-xs text-muted-foreground mt-1">From resolved outcomes</p>
             </div>
-            <div className="bg-card border border-red-500/20 rounded-xl p-4 bg-red-500/5">
+            <div className="bg-card border border-border rounded-xl p-4">
               <div className="flex items-center gap-2 mb-2">
-                <Flame size={16} className="text-red-400" />
-                <span className="text-xs text-muted-foreground">Hot Pipeline</span>
+                <Target size={16} className="text-indigo-400" />
+                <span className="text-xs text-muted-foreground">Sales Conversion</span>
               </div>
-              <p className="text-red-300 text-xl font-semibold">${(hotPipeline / 1000).toFixed(0)}K</p>
-              <p className="text-xs text-red-400 mt-1">Immediate action needed</p>
+              <p className="text-foreground text-xl font-semibold">{salesConversionRate.toFixed(1)}%</p>
+              <p className="text-xs text-muted-foreground mt-1">{salesClosedCount} / {salesCalls.length} Sales</p>
+            </div>
+            <div className="bg-card border border-border rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Phone size={16} className="text-amber-400" />
+                <span className="text-xs text-muted-foreground">PTP Rate</span>
+              </div>
+              <p className="text-foreground text-xl font-semibold">{ptpRate.toFixed(1)}%</p>
+              <p className="text-xs text-muted-foreground mt-1">{ptpCount} / {collectionsCalls.length} Collections</p>
             </div>
           </>
         ) : (
@@ -278,7 +303,7 @@ export function BusinessIntelligence() {
         )}
 
         {/* Agent Performance Bar Chart */}
-        <div className={cn('bg-card border border-border rounded-xl p-5', isAdmin ? 'lg:col-span-2' : 'lg:col-span-3')}>
+        <div className={cn('bg-card border border-border rounded-xl p-5', isAdmin ? 'lg:col-span-1' : 'lg:col-span-2')}>
           <h3 className="text-foreground text-sm font-semibold mb-4">Agent Performance Leaderboard</h3>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={performanceData} layout="vertical" margin={{ left: 20 }}>
@@ -290,6 +315,26 @@ export function BusinessIntelligence() {
                 {performanceData.map((entry, i) => (
                   <Cell key={i} fill={entry.score >= 85 ? '#10b981' : entry.score >= 70 ? '#f59e0b' : '#ef4444'} fillOpacity={0.85} />
                 ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Talk Ratio Leaderboard */}
+        <div className="bg-card border border-border rounded-xl p-5 lg:col-span-1">
+          <h3 className="text-foreground text-sm font-semibold mb-4">Talk Ratio (Target 40%)</h3>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={talkRatioData} layout="vertical" margin={{ left: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
+              <XAxis type="number" domain={[0, 100]} tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis type="category" dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} tickLine={false} width={60} />
+              <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '8px', fontSize: '12px' }} />
+              <Bar dataKey="ratio" radius={[0, 6, 6, 0]}>
+                {talkRatioData.map((entry, i) => {
+                  const diff = Math.abs(40 - entry.ratio!);
+                  const color = diff <= 5 ? '#10b981' : diff <= 15 ? '#f59e0b' : '#ef4444';
+                  return <Cell key={i} fill={color} fillOpacity={0.85} />;
+                })}
               </Bar>
             </BarChart>
           </ResponsiveContainer>

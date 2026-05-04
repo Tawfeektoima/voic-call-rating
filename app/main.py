@@ -5,15 +5,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Ensure FFmpeg is in PATH for torchcodec/hardware decoding
-scripts_path = r"D:\voic call rating\.venv\Scripts"
-if scripts_path not in os.environ["PATH"]:
-    os.environ["PATH"] += os.pathsep + scripts_path
+# Ensure .venv/Scripts is in PATH if it exists locally
+base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+scripts_path = os.path.join(base_path, ".venv", "Scripts")
+if os.path.exists(scripts_path) and scripts_path not in os.environ["PATH"]:
+    os.environ["PATH"] = scripts_path + os.pathsep + os.environ["PATH"]
 
 # Load environment variables
 load_dotenv()
 
 from app.database import engine, Base
-from app.routers import audio, analytics, admin, auth, system, export
+from app.routers import audio, analytics, admin, auth, system, export, hr
 
 # Create database tables automatically
 Base.metadata.create_all(bind=engine)
@@ -40,6 +42,7 @@ app.include_router(audio.router)
 app.include_router(analytics.router)
 app.include_router(system.router)
 app.include_router(export.router)
+app.include_router(hr.router)
 
 
 @app.get("/")

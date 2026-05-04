@@ -8,6 +8,7 @@ export enum UserRole {
   MANAGER = "manager",
   QA = "qa",
   AGENT = "agent",
+  HR_MANAGER = "hr_manager",
 }
 
 export enum CallStatus {
@@ -81,6 +82,21 @@ export interface WeaknessItem {
   deduction: number;
 }
 
+export interface CallOutcome {
+  id: number;
+  call_id: number;
+  campaign_type: string;
+  primary_outcome: string | null;
+  outcome_value: number | null;
+  follow_up_required: boolean;
+  follow_up_date: string | null;
+  agent_talk_time: number | null;
+  customer_talk_time: number | null;
+  talk_ratio: number | null;
+  campaign_specific_data: Record<string, any> | null;
+  created_at: string;
+}
+
 export interface Call {
   id: number;
   employee_id: number;
@@ -109,6 +125,7 @@ export interface Call {
   agent_talk_time: number | null;
   customer_talk_time: number | null;
   call_summary: string | null;
+  outcome?: CallOutcome | null;
 }
 
 export interface EmployeeRanking {

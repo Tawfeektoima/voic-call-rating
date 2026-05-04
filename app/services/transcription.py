@@ -1,8 +1,14 @@
 import os
 import gc
-import torch
-import whisperx
-from whisperx.diarize import DiarizationPipeline
+import subprocess
+try:
+    import torch
+    import whisperx
+    from whisperx.diarize import DiarizationPipeline
+    WHISPER_AVAILABLE = True
+except Exception as e:
+    print(f"[!] Warning: WhisperX/Torch failed to load: {e}")
+    WHISPER_AVAILABLE = False
 from typing import List, Dict, Any
 
 from app.config import get_settings
@@ -29,8 +35,17 @@ class CallTranscriber:
             self.device = device
             
         self.compute_type = "float16" if self.device == "cuda" else "int8"
+        
+        # Check for FFmpeg accessibility (Task 62-C)
+        try:
+            subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+            print("[*] FFmpeg is accessible in the system PATH.")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            print("[!] CRITICAL WARNING: FFmpeg not found in PATH. Audio decoding via torchcodec/whisperx will be slow or fail.")
 
     def _print_vram_usage(self, step_name: str):
+        if not WHISPER_AVAILABLE or self.device != "cuda":
+            return
         if self.device == "cuda":
             import torch
             allocated = torch.cuda.memory_allocated() / (1024**3)
@@ -47,7 +62,23 @@ class CallTranscriber:
             print(f"   ➤ Available VRAM   : {free_gb:.2f} GB")
             print("-" * 40)
 
-    def process_audio(self, audio_path: str, batch_size: int = 16) -> tuple[str, float]:
+    def _get_safe_batch_size(self) -> int:
+        if self.device != "cuda":
+            return 4
+        try:
+            free_mem, _ = torch.cuda.mem_get_info()
+            free_gb = free_mem / (1024**3)
+            if free_gb > 8.0:
+                return 16
+            elif free_gb > 5.0:
+                return 8
+            else:
+                return 4
+        except Exception as e:
+            print(f"[!] Error getting VRAM info: {e}. Defaulting to batch_size 4.")
+            return 4
+
+    def process_audio(self, audio_path: str, batch_size: int = None) -> tuple[str, float]:
         """
         Full pipeline with strict sequential model loading to save VRAM:
         Transcribe (Whisper) -> Align -> Diarize -> Assign Speakers -> Format String
@@ -55,10 +86,14 @@ class CallTranscriber:
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
+        if not WHISPER_AVAILABLE:
+            raise RuntimeError("Transcription service is unavailable: WhisperX/Torch not loaded correctly.")
+
         self._print_vram_usage("START")
         
         try:
-            print(f"[*] Processing audio: {audio_path}")
+            actual_batch_size = batch_size if batch_size is not None else self._get_safe_batch_size()
+            print(f"[*] Processing audio: {audio_path} (Batch Size: {actual_batch_size})")
             
             # 1. Load Audio
             audio = whisperx.load_audio(audio_path)
@@ -71,7 +106,7 @@ class CallTranscriber:
             # Repetition fix and VAD settings as requested
             result = model.transcribe(
                 audio, 
-                batch_size=batch_size,
+                batch_size=actual_batch_size,
                 chunk_size=30,
                 print_progress=True
             )
@@ -81,6 +116,7 @@ class CallTranscriber:
             gc.collect()
             if self.device == "cuda":
                 torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
             self._print_vram_usage("AFTER WHISPER UNLOAD")
 
             # 3. Align
@@ -93,6 +129,7 @@ class CallTranscriber:
             gc.collect()
             if self.device == "cuda":
                 torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
             self._print_vram_usage("AFTER ALIGN UNLOAD")
 
             # 4. Diarize
