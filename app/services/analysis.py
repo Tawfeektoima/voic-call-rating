@@ -191,13 +191,13 @@ Schema:
   ],
   "summary": string (A clear, objective 3-sentence summary of the call outcome),
   "qa_pairs": [
-    {
+    {{
       "objection": string (The customer objection or critical question),
       "response": string (The agent's response),
       "customer_emotion_at": string (Emotion during objection),
       "customer_emotion_after": string (Emotion after response),
       "is_golden": boolean (Ideal response?)
-    }
+    }}
   ],
   "opening_ok": boolean (Used correct opening script?),
   "closing_ok": boolean (Used correct closing script?),
