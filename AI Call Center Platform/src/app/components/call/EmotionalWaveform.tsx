@@ -59,7 +59,7 @@ export function EmotionalWaveform({ emotionTimeline, duration, currentTime, onSe
       ctx.globalAlpha = isPast ? 1.0 : 0.3;
       
       // Use primary color for agent, cyan for customer
-      const isAgent = point.speaker === 'agent';
+      const isAgent = point.speaker?.toLowerCase() === 'agent';
       const color = isAgent ? primaryColor : '#22d3ee'; // cyan-400
       ctx.fillStyle = color;
       

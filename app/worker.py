@@ -302,14 +302,67 @@ def process_call_audio_task(self, call_id: int):
 
             campaign_type_value = campaign.type.value if hasattr(campaign.type, 'value') else str(campaign.type)
 
+            SYSTEM_ANNOUNCEMENT_PATTERNS = [
+                "this call is being recorded",
+                "this call may be recorded",
+                "this call is recorded",
+                "your call may be monitored",
+                "calls may be recorded",
+                "this call is monitored",
+                "please hold",
+                "thank you for calling",
+            ]
+
+            def is_system_announcement(seg) -> bool:
+                text_lower = seg["text"].strip().lower()
+                if seg["start"] >= 5.0:
+                    return False
+                return any(pattern in text_lower for pattern in SYSTEM_ANNOUNCEMENT_PATTERNS)
+
+            filtered_transcript = [s for s in call.transcript if not is_system_announcement(s)]
+
             # Convert structured transcript back to string for LLM evaluation
             llm_transcript = "\n".join([
                 f"[{s['start']:05.2f} - {s['end']:05.2f}] {s['speaker']}: {s['text']}"
-                for s in call.transcript
+                for s in filtered_transcript
             ])
 
+            TRANSFER_PHRASES = [
+                "put you through",
+                "transfer you",
+                "connect you",
+                "put her through",
+                "put him through",
+                "transferring you",
+                "let me connect",
+                "i'll connect",
+                "i will connect",
+            ]
+
+            transfer_detected = any(
+                any(phrase in seg["text"].lower() for phrase in TRANSFER_PHRASES)
+                for seg in call.transcript
+                if seg["speaker"] == "Agent"
+            )
+
+            transfer_point_sec = None
+            if transfer_detected:
+                for seg in call.transcript:
+                    if seg["speaker"] == "Agent" and any(
+                        phrase in seg["text"].lower() for phrase in TRANSFER_PHRASES
+                    ):
+                        transfer_point_sec = seg["end"]
+                        break
+
             # Pass campaign_type for dynamic prompt injection (Task 59)
-            eval_result = evaluate_transcript(llm_transcript, campaign.evaluation_prompt, campaign_type=campaign_type_value)
+            eval_result = evaluate_transcript(
+                transcript=llm_transcript,
+                campaign_prompt=campaign.evaluation_prompt,
+                campaign_type=campaign_type_value,
+                agent_name=agent_name,
+                transfer_detected=transfer_detected,
+                transfer_point_sec=transfer_point_sec,
+            )
             
             call.reasoning = eval_result.reasoning
             call.call_summary = eval_result.summary
