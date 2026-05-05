@@ -17,6 +17,11 @@ const emotionColors = {
   agitation: { bg: 'bg-red-500/8', border: 'border-red-500/20', text: 'text-red-400' },
 };
 
+const isAgentSpeaker = (speaker: string): boolean => {
+  const s = speaker?.toLowerCase() ?? ""
+  return s === "agent" || s === "speaker_00"
+}
+
 function highlightText(text: string, query: string) {
   if (!query.trim()) return [{ text, highlight: false }];
   const parts = text.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'));
@@ -113,7 +118,7 @@ export function InteractiveTranscript({ transcript, currentTime, onSeek, agentNa
           const parts = highlightText(text, searchQuery);
           const ec = (emotionColors as any)[segment.emotion] || emotionColors.calm;
 
-          const isAgent = segment.speaker === 'Agent' || segment.speaker === 'agent' || segment.speaker === 'SPEAKER_00';
+          const isAgent = isAgentSpeaker(segment.speaker);
 
           return (
             <div

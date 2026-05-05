@@ -110,6 +110,7 @@ class CallTranscriber:
                 chunk_size=30,
                 print_progress=True
             )
+            result["segments"] = self.filter_hallucinations(result.get("segments", []))
             
             # Unload Whisper immediately
             del model
@@ -153,6 +154,42 @@ class CallTranscriber:
             
         finally:
             self._print_vram_usage("END")
+
+    def filter_hallucinations(self, segments: list) -> list:
+        """
+        Removes repeated consecutive segments produced by WhisperX hallucination
+        during silence or hold music. Allows max 1 consecutive repetition.
+        Also removes segments shorter than 0.3 seconds (noise artifacts).
+        """
+        if not segments:
+            return segments
+
+        filtered = []
+        repeat_count = 0
+        last_text = ""
+
+        for seg in segments:
+            current_text = seg.get("text", "").strip().lower()
+            seg_duration = seg.get("end", 0) - seg.get("start", 0)
+
+            if seg_duration < 0.3:
+                continue
+
+            if current_text == last_text:
+                repeat_count += 1
+                if repeat_count >= 2:
+                    continue
+            else:
+                repeat_count = 0
+
+            last_text = current_text
+            filtered.append(seg)
+
+        removed = len(segments) - len(filtered)
+        if removed > 0:
+            print(f"🧹 Hallucination filter: removed {removed} repeated/short segments.")
+
+        return filtered
 
     def _build_structured_transcript(self, segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         output = []
