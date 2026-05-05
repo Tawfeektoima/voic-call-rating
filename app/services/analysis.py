@@ -147,73 +147,127 @@ Additionally, populate these top-level outcome fields:
 """
 
 
-def evaluate_transcript(transcript: str, campaign_prompt: str, campaign_type: str = "customer_service") -> EvaluationResult:
+def build_system_message(
+    campaign_prompt: str,
+    campaign_type: str,
+    agent_name: str = None,
+    transfer_detected: bool = False
+) -> str:
+    outcome_extraction = _build_campaign_outcome_prompt(campaign_type)
+    agent_label = f'"{ agent_name}"' if agent_name else '"Agent"'
+
+    return f"""
+You are an Expert Quality Assurance (QA) Manager evaluating a recorded customer service call.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🧠 TRANSCRIPT UNDERSTANDING — READ FIRST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+The transcript contains segments with a "speaker" field of either "Agent" or "Customer".
+The Agent being evaluated is: {agent_label}
+
+⚠️ MULTI-PARTY CALLS & TRANSFERS:
+{"🔄 TRANSFER DETECTED: This call contains a call transfer." if transfer_detected else ""}
+Some calls involve a transfer or conference where a third party joins mid-call
+(e.g., a debt relief agent, supervisor, or vendor). In such cases:
+- The ORIGINAL agent being evaluated is: {agent_label}
+- After a transfer, the new speaker labeled "Customer" may actually be
+  a representative from another company (NOT the customer).
+- Evaluate ONLY the original agent {agent_label} — their segments
+  appear BEFORE the transfer point.
+- Segments AFTER the phrase "I'm going to put you through" /
+  "I'll transfer you" / "let me connect you" / "I'm going to go ahead
+  and put her through" belong to the RECEIVING party, not the agent.
+- Do NOT evaluate the third-party representative as the agent.
+- Do NOT penalize the agent for what the third-party says after transfer.
+- The agent's score should reflect only the pre-transfer interaction.
+
+⚠️ TRANSCRIPT ARTIFACTS:
+WhisperX may produce repeated identical phrases during silence or hold music.
+Example: the same sentence repeated 10+ times in a row = audio artifact, NOT real speech.
+- Ignore any phrase repeated more than 3 times consecutively.
+- Do NOT penalize the agent for transcription artifacts.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 CAMPAIGN EVALUATION RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{campaign_prompt}
+
+Provide a BALANCED and OBJECTIVE assessment.
+You MUST identify BOTH strengths AND areas for improvement.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 BEHAVIOR EVALUATION RUBRIC
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Evaluate the agent on:
+1. RAPPORT BUILDING     — Greeting, warmth, name usage, empathy markers
+2. EMOTIONAL SYNC       — Tone mirroring, de-escalation, emotional awareness
+3. OWNERSHIP & TRUST    — Taking responsibility, assurance language, confidence
+4. PROCESS CLARITY      — Clear explanations, step-by-step guidance, no jargon
+5. COMPLIANCE           — Opening/closing script, identity verification
+6. ACTIVE LISTENING     — Clarifying questions, not interrupting, summarizing
+7. PROFESSIONALISM      — Language quality, patience, no emotional outbursts
+
+Point Deduction Scale:
+- Minor (word choice, slight tone issue):               -2 to -5 pts
+- Moderate (missed step, unclear explanation):          -5 to -10 pts
+- Serious (compliance failure, ignored customer anger): -10 to -20 pts
+- Critical (agent outburst, abusive language):          -20 to -35 pts
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 BUSINESS OUTCOME EXTRACTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{outcome_extraction}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📤 OUTPUT — STRICT JSON ONLY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Output ONLY valid JSON. No markdown. No extra text before or after.
+Write "reasoning" FIRST — think step-by-step before calculating score.
+
+{{{{
+  "reasoning": "Step-by-step: identify the real agent, note any transcript artifacts, justify each deduction",
+  "score": 0-100,
+  "strengths": ["2–4 specific positive behaviors"],
+  "weaknesses": [
+    {{{{"issue": "Short category label", "detail": "What went wrong", "deduction": 0.0}}}}
+  ],
+  "summary": "3 clear sentences: what happened, agent performance, outcome",
+  "qapairs": [
+    {{{{
+      "objection": "Customer objection text",
+      "response": "Agent response text",
+      "customeremotionat": "calm|stress|agitation",
+      "customeremotionafter": "calm|stress|agitation",
+      "isgolden": false
+    }}}}
+  ],
+  "openingok": false,
+  "closingok": false,
+  "dobverified": false,
+  "primaryoutcome": "string",
+  "outcomevalue": null,
+  "followuprequired": false,
+  "followupdate": null,
+  "campaignspecificdata": {{{{}}}}
+}}}}
+
+VALIDATION CHECKLIST before responding:
+✅ "reasoning" explicitly identifies who the real agent is
+✅ "score" is a number between 0 and 100
+✅ All "deduction" values are positive numbers
+✅ "summary" contains no schema field names or internal notes
+✅ No field is missing from the JSON
+"""
+
+
+def evaluate_transcript(transcript: str, campaign_prompt: str, campaign_type: str = "customer_service", agent_name: str = None, transfer_detected: bool = False, transfer_point_sec: float = None) -> EvaluationResult:
     """
     Sends the transcript and the campaign-specific prompt to Groq.
     Forces JSON output adhering to the EvaluationResult schema.
     Dynamically injects campaign-type-specific extraction rules.
     """
     
-    # Build dynamic outcome extraction block
-    outcome_extraction = _build_campaign_outcome_prompt(campaign_type)
-    
-    system_message = f"""You are an Expert Quality Assurance (QA) Manager. 
-Your task is to evaluate a customer service call transcript between an Agent and a Customer based on the specific campaign rules provided below.
-
-### EVALUATION GOAL:
-Provide a balanced and objective assessment. You MUST identify both areas of excellence and areas for improvement.
-
-### CAMPAIGN SPECIFIC RULES:
-{campaign_prompt}
-
-### BEHAVIOR CATEGORIZATION:
-1. **Strengths**: At least 3 positive behaviors where the agent excelled or followed best practices (e.g., "Effective issue resolution", "Polite tone", "Active Listening", "Clear Greeting").
-2. **Weaknesses**: Areas for improvement and critical failures with associated deductions based on the rubric.
-
-### SANITIZED SUMMARY:
-Provide a clear, objective 3-sentence summary of the call outcome, avoiding technical jargon or internal notes.
-{outcome_extraction}
-### OUTPUT FORMAT:
-You MUST output ONLY valid JSON that conforms to the following schema structure. 
-You MUST write the "reasoning" field FIRST before calculating the "score" to ensure logical consistency.
-
-Schema:
-{{
-  "reasoning": string (Think step-by-step here. Analyze the call based on the rules, justify the deductions, and list your findings BEFORE giving the numerical score),
-  "score": float (Overall call score from 0 to 100),
-  "strengths": [string] (List of 2-4 positive behaviors found in the call),
-  "weaknesses": [
-    {{
-      "issue": string (Short category label from the rules above),
-      "detail": string (Explanation of what was wrong),
-      "deduction": float (Points deducted for this weakness)
-    }}
-  ],
-  "summary": string (A clear, objective 3-sentence summary of the call outcome),
-  "qa_pairs": [
-    {
-      "objection": string (The customer objection or critical question),
-      "response": string (The agent's response),
-      "customer_emotion_at": string (Emotion during objection),
-      "customer_emotion_after": string (Emotion after response),
-      "is_golden": boolean (Ideal response?)
-    }
-  ],
-  "opening_ok": boolean (Used correct opening script?),
-  "closing_ok": boolean (Used correct closing script?),
-  "dob_verified": boolean (Was DOB verified?),
-  "primary_outcome": string or null (Main business outcome of the call),
-  "outcome_value": float or null (Monetary/numeric value of the outcome),
-  "follow_up_required": boolean (Whether follow-up is needed),
-  "follow_up_date": string or null (ISO date if follow-up is needed),
-  "campaign_specific_data": object or null (Campaign-type-specific extracted fields as described above)
-}}
-
-### JSON VALIDATION CHECKLIST:
-- Ensure `primary_outcome` is a string.
-- Ensure `outcome_value` is a float.
-- Ensure all keys inside `campaign_specific_data` precisely match the requested schema fields.
-"""
+    system_message = build_system_message(campaign_prompt, campaign_type, agent_name, transfer_detected)
 
     max_retries = 3
     retry_delay = 5
@@ -290,7 +344,7 @@ def assign_speakers(segments: list, agent_name: str = None) -> dict:
     agent_keywords = [
         "citizens debt relief", "how can i help", "calling from", 
         "thank you for calling", "extension", "support", "transferring",
-        "this call is recorded", "for quality assurance"
+        "for quality assurance"
     ]
     
     if agent_name:
@@ -311,8 +365,8 @@ def assign_speakers(segments: list, agent_name: str = None) -> dict:
 
     scores = {} # {speaker_id: {"agent": score, "customer": score, "first_seen": timestamp}}
 
-    # Analyze first 10 segments
-    for idx, seg in enumerate(segments[:10]):
+    # Analyze first 20 segments
+    for idx, seg in enumerate(segments[:20]):
         speaker = seg.get("speaker", "UNKNOWN")
         if speaker == "UNKNOWN":
             continue
@@ -323,9 +377,7 @@ def assign_speakers(segments: list, agent_name: str = None) -> dict:
         if speaker not in scores:
             scores[speaker] = {"agent": 0, "customer": 0, "first_seen": start_time}
             
-        # Weighted scoring: earlier segments are more likely to contain introductions
-        # First 3 segments get 2x weight for "Agent" keywords
-        weight = 2.0 if idx < 3 else 1.0
+        weight = 1.0
         
         for kw in agent_keywords:
             if kw in text:
@@ -356,15 +408,33 @@ def assign_speakers(segments: list, agent_name: str = None) -> dict:
             elif s["first_seen"] < scores[best_agent_speaker]["first_seen"]:
                 best_agent_speaker = speaker
 
-    # Fallback: If no clear agent found by keywords, pick the speaker who started first
     if best_agent_speaker is None or max_agent_score <= 0:
         sorted_speakers = sorted(
             [{"id": k, "time": v["first_seen"]} for k, v in scores.items()],
             key=lambda x: x["time"]
         )
-        if sorted_speakers:
+        if len(sorted_speakers) >= 2:
+            # In inbound calls the agent answers second.
+            # In outbound calls the agent speaks first.
+            # We cannot know the direction, so we pick the speaker
+            # with the HIGHER net agent score regardless of position.
+            # If still tied, pick the SECOND speaker (inbound default).
+            scores_by_net = sorted(
+                sorted_speakers,
+                key=lambda x: (
+                    scores[x["id"]]["agent"] - scores[x["id"]]["customer"]
+                ),
+                reverse=True
+            )
+            best_agent_speaker = scores_by_net[0]["id"]
+            # If net scores are equal, fall back to second speaker (inbound default)
+            if (scores[scores_by_net[0]["id"]]["agent"] - scores[scores_by_net[0]["id"]]["customer"] ==
+                scores[scores_by_net[1]["id"]]["agent"] - scores[scores_by_net[1]["id"]]["customer"]):
+                best_agent_speaker = sorted_speakers[1]["id"]
+            print(f"[*] Fallback: Assigning {best_agent_speaker} as Agent (net-score or inbound default).")
+        elif sorted_speakers:
             best_agent_speaker = sorted_speakers[0]["id"]
-            print(f"[*] Fallback: Assigning first speaker ({best_agent_speaker}) as Agent.")
+            print(f"[*] Fallback: Only one speaker found, assigning {best_agent_speaker} as Agent.")
 
     # Map roles - ensure ALL unique speakers in the call are mapped
     speaker_map = {}

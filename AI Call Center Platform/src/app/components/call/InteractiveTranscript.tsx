@@ -17,6 +17,11 @@ const emotionColors = {
   agitation: { bg: 'bg-red-500/8', border: 'border-red-500/20', text: 'text-red-400' },
 };
 
+const isAgentSpeaker = (speaker: string): boolean => {
+  const s = speaker?.toLowerCase() ?? ""
+  return s === "agent" || s === "speaker_00"
+}
+
 function highlightText(text: string, query: string) {
   if (!query.trim()) return [{ text, highlight: false }];
   const parts = text.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'));
@@ -113,6 +118,8 @@ export function InteractiveTranscript({ transcript, currentTime, onSeek, agentNa
           const parts = highlightText(text, searchQuery);
           const ec = (emotionColors as any)[segment.emotion] || emotionColors.calm;
 
+          const isAgent = isAgentSpeaker(segment.speaker);
+
           return (
             <div
               key={segment.id}
@@ -129,9 +136,9 @@ export function InteractiveTranscript({ transcript, currentTime, onSeek, agentNa
               <div className="flex-shrink-0 flex flex-col items-center gap-1 pt-0.5">
                 <div className={cn(
                   'size-6 rounded-full flex items-center justify-center',
-                  segment.speaker === 'agent' || segment.speaker === 'SPEAKER_00' ? 'bg-primary/20' : 'bg-cyan-500/20'
+                  isAgent ? 'bg-primary/20' : 'bg-cyan-500/20'
                 )}>
-                  {segment.speaker === 'agent' || segment.speaker === 'SPEAKER_00'
+                  {isAgent
                     ? <Mic size={11} className="text-primary" />
                     : <User size={11} className="text-cyan-400" />
                   }
@@ -142,8 +149,8 @@ export function InteractiveTranscript({ transcript, currentTime, onSeek, agentNa
               {/* Content */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
-                  <span className={cn('text-xs font-medium', segment.speaker === 'agent' || segment.speaker === 'SPEAKER_00' ? 'text-primary' : 'text-cyan-400')}>
-                    {segment.speaker === 'agent' || segment.speaker === 'SPEAKER_00' ? (agentName || 'Agent') : 'Customer'}
+                  <span className={cn('text-xs font-medium', isAgent ? 'text-primary' : 'text-cyan-400')}>
+                    {isAgent ? (agentName || 'Agent') : 'Customer'}
                   </span>
                   <span className="text-xs text-muted-foreground">{formatTime(segment.start)} – {formatTime(segment.end)}</span>
                   <span className={cn('text-xs px-1.5 py-0.5 rounded-full capitalize ml-auto', ec.bg, ec.text)}>

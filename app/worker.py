@@ -2,18 +2,25 @@ import os
 import gc
 import torch
 import redis
+import json
 import psutil
 from celery import Celery
 from datetime import datetime, timezone
 from app.database import SessionLocal
 from app.models import Call, Campaign, CallStatus, SystemLog, CallOutcome, Employee, CallQAPair
 from app.services.transcription import transcriber
+import logging
+
+# Configure logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 from app.services.analysis import evaluate_transcript, assign_speakers, CAMPAIGN_EXTRACTION_RULES
 from app.services.acoustic import AcousticAnalyzer
 from app.config import get_settings
 
 settings = get_settings()
 acoustic_analyzer = AcousticAnalyzer()
+redis_client = redis.from_url(settings.CELERY_BROKER_URL)
 
 def force_cuda_cleanup():
     """Explicitly collect garbage and clear PyTorch's CUDA cache."""
@@ -113,15 +120,18 @@ def process_call_audio_task(self, call_id: int):
             call.status = CallStatus.FAILED
             call.error_message = "Corrupt Upload: Audio file is empty or missing."
             db.commit()
+            redis_client.publish("call_updates", json.dumps({"call_id": call_id, "status": CallStatus.FAILED.value}))
             return
 
         # 1. Idempotency Check & Start Processing
-        if call.status in [CallStatus.PROCESSING, CallStatus.TRANSCRIBED, CallStatus.EVALUATED]:
-            print(f"[*] Call {call_id} is already in state '{call.status.value}'. Skipping duplicate task.")
+        # FIX: Allow TRANSCRIBED calls to proceed to EVALUATION. Only skip if already EVALUATED or currently PROCESSING.
+        if call.status == CallStatus.EVALUATED:
+            print(f"[*] Call {call_id} is already EVALUATED. Skipping duplicate task.")
             return
 
         call.status = CallStatus.PROCESSING
         db.commit()
+        redis_client.publish("call_updates", json.dumps({"call_id": call_id, "status": CallStatus.PROCESSING.value}))
 
         # 2. Transcribe & Diarize
         try:
@@ -199,12 +209,14 @@ def process_call_audio_task(self, call_id: int):
             
             # Tenure
             if employee and employee.created_at:
-                delta_tenure = (datetime.now(timezone.utc) - employee.created_at)
+                # Convert the current aware UTC datetime to a naive datetime for safe DB subtraction
+                now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+                delta_tenure = (now_utc_naive - employee.created_at)
                 employee.agent_tenure_days = delta_tenure.days
             
             # Calls Before This (Today)
             if call.call_datetime:
-                start_of_day = datetime.combine(call.call_datetime.date(), datetime.min.time()).replace(tzinfo=timezone.utc)
+                start_of_day = datetime.combine(call.call_datetime.date(), datetime.min.time())
                 calls_today_count = db.query(Call).filter(
                     Call.employee_id == call.employee_id,
                     Call.created_at >= start_of_day,
@@ -260,6 +272,7 @@ def process_call_audio_task(self, call_id: int):
 
             call.status = CallStatus.TRANSCRIBED
             db.commit()
+            redis_client.publish("call_updates", json.dumps({"call_id": call_id, "status": CallStatus.TRANSCRIBED.value}))
             print(f"[*] Transcription and Emotion synchronization complete for Call {call_id}")
             
             # --- VRAM Offloading (Task 66) ---
@@ -267,6 +280,7 @@ def process_call_audio_task(self, call_id: int):
             
             print_worker_vram(f"POST-TRANSCRIPTION & EMOTION - Call ID {call_id}")
         except Exception as e:
+            logger.error(f"[!] Transcription Error for Call {call_id}: {str(e)}", exc_info=True)
             call.status = CallStatus.FAILED
             call.error_message = f"Transcription Error: {str(e)}"
             
@@ -275,6 +289,7 @@ def process_call_audio_task(self, call_id: int):
             db.add(sys_log)
             
             db.commit()
+            redis_client.publish("call_updates", json.dumps({"call_id": call_id, "status": CallStatus.FAILED.value}))
             return
 
         # 3. Evaluate with Groq
@@ -287,14 +302,67 @@ def process_call_audio_task(self, call_id: int):
 
             campaign_type_value = campaign.type.value if hasattr(campaign.type, 'value') else str(campaign.type)
 
+            SYSTEM_ANNOUNCEMENT_PATTERNS = [
+                "this call is being recorded",
+                "this call may be recorded",
+                "this call is recorded",
+                "your call may be monitored",
+                "calls may be recorded",
+                "this call is monitored",
+                "please hold",
+                "thank you for calling",
+            ]
+
+            def is_system_announcement(seg) -> bool:
+                text_lower = seg["text"].strip().lower()
+                if seg["start"] >= 5.0:
+                    return False
+                return any(pattern in text_lower for pattern in SYSTEM_ANNOUNCEMENT_PATTERNS)
+
+            filtered_transcript = [s for s in call.transcript if not is_system_announcement(s)]
+
             # Convert structured transcript back to string for LLM evaluation
             llm_transcript = "\n".join([
                 f"[{s['start']:05.2f} - {s['end']:05.2f}] {s['speaker']}: {s['text']}"
-                for s in call.transcript
+                for s in filtered_transcript
             ])
 
+            TRANSFER_PHRASES = [
+                "put you through",
+                "transfer you",
+                "connect you",
+                "put her through",
+                "put him through",
+                "transferring you",
+                "let me connect",
+                "i'll connect",
+                "i will connect",
+            ]
+
+            transfer_detected = any(
+                any(phrase in seg["text"].lower() for phrase in TRANSFER_PHRASES)
+                for seg in call.transcript
+                if seg["speaker"] == "Agent"
+            )
+
+            transfer_point_sec = None
+            if transfer_detected:
+                for seg in call.transcript:
+                    if seg["speaker"] == "Agent" and any(
+                        phrase in seg["text"].lower() for phrase in TRANSFER_PHRASES
+                    ):
+                        transfer_point_sec = seg["end"]
+                        break
+
             # Pass campaign_type for dynamic prompt injection (Task 59)
-            eval_result = evaluate_transcript(llm_transcript, campaign.evaluation_prompt, campaign_type=campaign_type_value)
+            eval_result = evaluate_transcript(
+                transcript=llm_transcript,
+                campaign_prompt=campaign.evaluation_prompt,
+                campaign_type=campaign_type_value,
+                agent_name=agent_name,
+                transfer_detected=transfer_detected,
+                transfer_point_sec=transfer_point_sec,
+            )
             
             call.reasoning = eval_result.reasoning
             call.call_summary = eval_result.summary
@@ -308,7 +376,7 @@ def process_call_audio_task(self, call_id: int):
             call.dob_verified = eval_result.dob_verified
 
             call.status = CallStatus.EVALUATED
-            call.processed_at = datetime.now(timezone.utc)
+            call.processed_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
             # --- Save RAG QA Pairs (Task 65) ---
             if eval_result.qa_pairs:
@@ -362,6 +430,7 @@ def process_call_audio_task(self, call_id: int):
             db.add(outcome)
 
             db.commit()
+            redis_client.publish("call_updates", json.dumps({"call_id": call_id, "status": CallStatus.EVALUATED.value}))
             # Action Item 1: Radar Chart Data Synchronization
             from app.services.aggregation import update_agent_mastery_stats
             update_agent_mastery_stats(db, call.employee_id)
@@ -370,6 +439,7 @@ def process_call_audio_task(self, call_id: int):
             
             
         except Exception as e:
+            logger.error(f"[!] Evaluation Error for Call {call_id}: {str(e)}", exc_info=True)
             call.status = CallStatus.FAILED
             call.error_message = f"Evaluation Error: {str(e)}"
             
@@ -377,6 +447,7 @@ def process_call_audio_task(self, call_id: int):
             db.add(sys_log)
             
             db.commit()
+            redis_client.publish("call_updates", json.dumps({"call_id": call_id, "status": CallStatus.FAILED.value}))
             return
 
     except Exception as e:
@@ -388,6 +459,7 @@ def process_call_audio_task(self, call_id: int):
                 call.error_message = f"Critical Error in {current_stage}: {str(e)}"
                 db.add(SystemLog(call_id=call_id, error_type="CRITICAL_FAILURE", error_message=f"Stage: {current_stage} | Error: {str(e)}"))
                 db.commit()
+                redis_client.publish("call_updates", json.dumps({"call_id": call_id, "status": CallStatus.FAILED.value}))
         except:
             pass
     finally:

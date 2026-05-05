@@ -1,18 +1,34 @@
-import { useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getCallDetails } from '../lib/api';
-import { Call, CallStatus } from '../lib/types';
+import { Call } from '../lib/types';
 
 export const useCallStatus = (callId: number | null) => {
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!callId) return;
+
+    const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+    const wsBaseUrl = apiBaseUrl.replace(/^http/, 'ws');
+    const wsUrl = `${wsBaseUrl}/ws/calls/${callId}`;
+    const socket = new WebSocket(wsUrl);
+
+    socket.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.call_id === callId) {
+        queryClient.invalidateQueries({ queryKey: ['callStatus', callId] });
+      }
+    };
+
+    return () => {
+      socket.close();
+    };
+  }, [callId, queryClient]);
+
   return useQuery<Call>({
     queryKey: ['callStatus', callId],
     queryFn: () => getCallDetails(callId!),
     enabled: !!callId,
-    refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      if (status === CallStatus.PENDING || status === CallStatus.PROCESSING) {
-        return 3000; // Poll every 3 seconds
-      }
-      return false; // Stop polling
-    },
   });
 };

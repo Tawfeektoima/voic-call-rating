@@ -111,6 +111,13 @@ class QAPairItem(BaseModel):
     is_golden: bool = Field(default=False, description="Whether this response is considered an ideal 'Golden' response")
 
 
+class WeaknessItem(BaseModel):
+    """Schema for individual identified weaknesses in a call."""
+    issue: str = Field(..., description="Short category label for the weakness")
+    detail: str = Field(..., description="Explanation of what was wrong")
+    deduction: float = Field(..., description="Points deducted for this weakness")
+
+
 class EvaluationResult(BaseModel):
     """
     Strict schema that Groq must return.
@@ -142,6 +149,9 @@ class EvaluationResult(BaseModel):
     follow_up_required: bool = Field(default=False, description="Whether a follow-up action is required")
     follow_up_date: Optional[str] = Field(default=None, description="Suggested follow-up date if applicable (ISO format)")
     campaign_specific_data: Optional[dict] = Field(default=None, description="Campaign-type-specific extracted fields")
+
+
+EvaluationResult.model_rebuild()
 
 
 # ===========================
