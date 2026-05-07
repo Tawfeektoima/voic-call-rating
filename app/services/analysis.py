@@ -373,14 +373,29 @@ def evaluate_transcript(transcript: str, campaign_prompt: str, campaign_type: st
                                 "deduction": deducted
                             })
 
+                # Robust extraction for opening/closing regardless if dict or object
+                opening_data = sales_result.opening
+                opening_ok = False
+                if hasattr(opening_data, 'get'):
+                    opening_ok = opening_data.get("identified_company", False)
+                else:
+                    opening_ok = getattr(opening_data, 'identified_company', False)
+
+                closing_data = sales_result.closing
+                closing_ok = False
+                if hasattr(closing_data, 'get'):
+                    closing_ok = closing_data.get("professional_farewell", False)
+                else:
+                    closing_ok = getattr(closing_data, 'professional_farewell', False)
+
                 return EvaluationResult(
                     score=sales_result.score,
                     summary=sales_result.summary,
                     reasoning=sales_result.reasoning,
                     strengths=[{"issue": s, "detail": ""} for s in sales_result.strengths],
                     weaknesses=weaknesses,
-                    opening_ok=sales_result.opening.get("identified_company", False),
-                    closing_ok=sales_result.closing.get("professional_farewell", False),
+                    opening_ok=opening_ok,
+                    closing_ok=closing_ok,
                     raw_sales_data=sales_result.model_dump()
                 )
 
