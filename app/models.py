@@ -172,6 +172,7 @@ class Call(Base):
     closing_ok          = Column(Boolean, default=False)
     dob_verified        = Column(Boolean, default=False)
     de_escalation_success = Column(Boolean, default=False)
+    sales_eval_data     = Column(JSON, nullable=True)
 
     # Timestamps
     created_at       = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

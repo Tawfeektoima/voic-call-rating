@@ -367,13 +367,37 @@ def process_call_audio_task(self, call_id: int):
             call.reasoning = eval_result.reasoning
             call.call_summary = eval_result.summary
             call.evaluation_score = eval_result.score
-            call.strengths = eval_result.strengths
+            call.strengths = [s.model_dump() if hasattr(s, "model_dump") else s for s in eval_result.strengths]
             call.weaknesses = [w.model_dump() for w in eval_result.weaknesses]
             
             # Compliance Flags (Task 66)
             call.opening_ok = eval_result.opening_ok
             call.closing_ok = eval_result.closing_ok
             call.dob_verified = eval_result.dob_verified
+
+            # Sales Data & Violations (Task 5)
+            if campaign_type_value == "sales" and eval_result.raw_sales_data:
+                call.sales_eval_data = eval_result.raw_sales_data
+
+                # Auto-flag HR violations
+                violations = eval_result.raw_sales_data.get("violations", {})
+                if violations:
+                    flagged_violations = [
+                        k for k, v in violations.items() 
+                        if isinstance(v, dict) and v.get("flagged")
+                    ]
+                    if flagged_violations:
+                        print(f"⚠️ HR ALERT — Call {call_id} | Agent {call.employee_id} "
+                              f"| Violations: {flagged_violations}")
+                        # TODO: write to HR violations table (Task 6 extension)
+
+                # Auto-set lead status from offer funnel
+                offers = eval_result.raw_sales_data.get("offers_presented", [])
+                call.lead_status = (
+                    "hot" if len(offers) >= 3 else
+                    "warm" if len(offers) >= 1 else
+                    "cold"
+                )
 
             call.status = CallStatus.EVALUATED
             call.processed_at = datetime.now(timezone.utc).replace(tzinfo=None)

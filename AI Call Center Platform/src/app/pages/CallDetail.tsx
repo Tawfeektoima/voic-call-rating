@@ -12,6 +12,10 @@ import { EmotionalWaveform } from '../components/call/EmotionalWaveform';
 import { TalkListenGauge } from '../components/call/TalkListenGauge';
 import { InteractiveTranscript } from '../components/call/InteractiveTranscript';
 import { CallAnalysis } from '../components/call/CallAnalysis';
+import { SalesScoreBreakdown } from '../components/call/SalesScoreBreakdown';
+import { OfferFunnel } from '../components/call/OfferFunnel';
+import { ViolationsPanel } from '../components/call/ViolationsPanel';
+import { PenaltiesTable } from '../components/call/PenaltiesTable';
 import { useApp } from '../context/AppContext';
 import { cn } from '../components/ui/utils';
 import { Skeleton } from '../components/ui/skeleton';
@@ -85,6 +89,9 @@ export function CallDetail() {
   const agentTime = call.outcome?.agent_talk_time ?? call.agent_talk_time ?? 0;
   const customerTime = call.outcome?.customer_talk_time ?? call.customer_talk_time ?? 0;
   const silenceSeconds = (call.audio_duration || 0) - agentTime - customerTime;
+
+  const isSalesCall = !!call?.sales_eval_data;
+  const salesData = call?.sales_eval_data;
 
   return (
     <div className="p-6 space-y-5">
@@ -246,28 +253,43 @@ export function CallDetail() {
                 silenceSeconds={Math.max(0, silenceSeconds)}
               />
 
-              {/* Campaign Specific Insights */}
-              {!isProcessing && call.outcome?.campaign_specific_data && Object.keys(call.outcome.campaign_specific_data).length > 0 && (
-                <div className="bg-card border border-border rounded-xl p-5 mb-5">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Target size={14} className="text-primary" />
-                    <span className="text-foreground text-sm font-semibold">Business Insights</span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    {Object.entries(call.outcome.campaign_specific_data).map(([key, value]) => {
-                      const displayKey = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                      let displayValue = String(value);
-                      if (typeof value === 'boolean') displayValue = value ? 'Yes' : 'No';
-                      
-                      return (
-                        <div key={key} className="bg-secondary/30 rounded-lg p-2.5">
-                          <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">{displayKey}</p>
-                          <p className="text-xs font-medium text-foreground">{displayValue}</p>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+              {/* Campaign Specific Insights or Sales Dashboard */}
+              {!isProcessing && (
+                isSalesCall && salesData ? (
+                  <>
+                    <SalesScoreBreakdown breakdown={salesData.score_breakdown} />
+                    <OfferFunnel 
+                      presented={salesData.offers_presented}
+                      skipped={salesData.offers_skipped_incorrectly}
+                      details={salesData.offer_details}
+                    />
+                    <ViolationsPanel violations={salesData.violations} />
+                    <PenaltiesTable penalties={salesData.penalties} />
+                  </>
+                ) : (
+                  call.outcome?.campaign_specific_data && Object.keys(call.outcome.campaign_specific_data).length > 0 && (
+                    <div className="bg-card border border-border rounded-xl p-5 mb-5">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Target size={14} className="text-primary" />
+                        <span className="text-foreground text-sm font-semibold">Business Insights</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        {Object.entries(call.outcome.campaign_specific_data).map(([key, value]) => {
+                          const displayKey = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                          let displayValue = String(value);
+                          if (typeof value === 'boolean') displayValue = value ? 'Yes' : 'No';
+                          
+                          return (
+                            <div key={key} className="bg-secondary/30 rounded-lg p-2.5">
+                              <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">{displayKey}</p>
+                              <p className="text-xs font-medium text-foreground">{displayValue}</p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )
+                )
               )}
 
               {/* AI Summary */}

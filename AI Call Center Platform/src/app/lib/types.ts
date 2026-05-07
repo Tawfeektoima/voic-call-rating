@@ -97,17 +97,79 @@ export interface CallOutcome {
   created_at: string;
 }
 
+export interface SalesScoreBreakdown {
+  opening: number;
+  script_compliance: number;
+  customer_handling: number;
+  conduct: number;
+  closing: number;
+}
+
+export interface SalesViolation {
+  flagged: boolean;
+  evidence: string;
+}
+
+export interface SalesViolations {
+  policy_misrepresentation: SalesViolation;
+  abusive_language: SalesViolation;
+  forced_sale: SalesViolation;
+  talking_to_another_person: SalesViolation;
+  arabic_language: SalesViolation;
+  eating_drinking: SalesViolation;
+  background_noise: SalesViolation;
+  dead_air: SalesViolation;
+  hung_up_no_reason: SalesViolation;
+  no_callback_after_drop: SalesViolation;
+  hold_no_permission: SalesViolation;
+  hold_too_long: SalesViolation;
+  no_mute_cough: SalesViolation;
+  transferred_dead_air: SalesViolation;
+}
+
+export interface SalesPenalty {
+  violation: string;
+  occurrence: number;
+  penalty: string;
+}
+
+export interface OfferDetail {
+  offer_name: string;
+  presented: boolean;
+  qualifying_questions_asked: boolean;
+  branch_followed_correctly: boolean;
+  walked_through_enrollment: boolean;
+  skip_reason: string;
+}
+
+export interface SalesEvalData {
+  score: number;
+  summary: string;
+  reasoning: string;
+  strengths: string[];
+  areas_for_improvement: string[];
+  opening: Record<string, any>;
+  qualifying_questions: Record<string, any>;
+  offers_presented: string[];
+  offers_skipped_incorrectly: string[];
+  offer_details: OfferDetail[];
+  closing: Record<string, any>;
+  violations?: SalesViolations;
+  penalties: SalesPenalty[];
+  score_breakdown?: SalesScoreBreakdown;
+}
+
 export interface Call {
   id: number;
   employee_id: number;
   campaign_id: number;
   original_filename: string | null;
   status: CallStatus | string;
-  transcript: string | null;
+  transcript: TranscriptSegment[] | null;
   reasoning: string | null;
   evaluation_score: number | null;
   audio_duration: number | null;
-  strengths: string[] | null;
+  strengths: any[] | null;
   weaknesses: WeaknessItem[] | Record<string, any>[] | null;
   error_message: string | null;
   
@@ -126,6 +188,7 @@ export interface Call {
   customer_talk_time: number | null;
   call_summary: string | null;
   outcome?: CallOutcome | null;
+  sales_eval_data?: SalesEvalData | null;
 }
 
 export interface EmployeeRanking {

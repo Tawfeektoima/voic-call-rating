@@ -111,6 +111,12 @@ class QAPairItem(BaseModel):
     is_golden: bool = Field(default=False, description="Whether this response is considered an ideal 'Golden' response")
 
 
+class StrengthItem(BaseModel):
+    """Schema for individual identified strengths in a call."""
+    issue: str = Field(..., description="Short category label for the strength")
+    detail: str = Field(default="", description="Explanation of the positive behavior")
+
+
 class WeaknessItem(BaseModel):
     """Schema for individual identified weaknesses in a call."""
     issue: str = Field(..., description="Short category label for the weakness")
@@ -125,7 +131,7 @@ class EvaluationResult(BaseModel):
     """
     reasoning: str = Field(..., description="Detailed step-by-step reasoning for the evaluation and scoring")
     score: float = Field(..., ge=0, le=100, description="Overall call score from 0 to 100")
-    strengths: List[str] = Field(default_factory=list, description="List of positive behaviors found in the call")
+    strengths: List[StrengthItem] = Field(default_factory=list, description="List of positive behaviors found in the call")
     weaknesses: List[WeaknessItem] = Field(
         default_factory=list,
         description="List of identified weaknesses with issues and deductions",
@@ -149,6 +155,22 @@ class EvaluationResult(BaseModel):
     follow_up_required: bool = Field(default=False, description="Whether a follow-up action is required")
     follow_up_date: Optional[str] = Field(default=None, description="Suggested follow-up date if applicable (ISO format)")
     campaign_specific_data: Optional[dict] = Field(default=None, description="Campaign-type-specific extracted fields")
+    
+    # --- Sales Support (Task 4) ---
+    raw_sales_data: Optional[dict] = Field(default=None, description="Full raw data from sales evaluations")
+
+    @field_validator("strengths", mode="before")
+    @classmethod
+    def validate_strengths(cls, v):
+        if isinstance(v, list):
+            new_v = []
+            for item in v:
+                if isinstance(item, str):
+                    new_v.append({"issue": item, "detail": ""})
+                else:
+                    new_v.append(item)
+            return new_v
+        return v
 
 
 EvaluationResult.model_rebuild()
@@ -328,3 +350,69 @@ class AlertCreate(BaseModel):
     error_message: str
     severity: Optional[str] = "info"
     resolved: Optional[bool] = False
+
+
+# ===========================
+#  Sales Evaluation Schemas
+# ===========================
+
+class OfferDetail(BaseModel):
+    offer_name: str
+    presented: bool
+    qualifying_questions_asked: bool = False
+    branch_followed_correctly: bool = True
+    walked_through_enrollment: bool = False
+    skip_reason: str = ""
+
+
+class ViolationDetail(BaseModel):
+    flagged: bool
+    evidence: str = ""
+
+
+class SalesViolations(BaseModel):
+    policy_misrepresentation: ViolationDetail
+    abusive_language: ViolationDetail
+    forced_sale: ViolationDetail
+    talking_to_another_person: ViolationDetail
+    arabic_language: ViolationDetail
+    eating_drinking: ViolationDetail
+    background_noise: ViolationDetail
+    dead_air: ViolationDetail
+    hung_up_no_reason: ViolationDetail
+    no_callback_after_drop: ViolationDetail
+    hold_no_permission: ViolationDetail
+    hold_too_long: ViolationDetail
+    no_mute_cough: ViolationDetail
+    transferred_dead_air: ViolationDetail
+
+
+class SalesPenalty(BaseModel):
+    violation: str
+    occurrence: int
+    penalty: str
+
+
+class SalesScoreBreakdown(BaseModel):
+    opening: float = 0.0
+    script_compliance: float = 0.0
+    customer_handling: float = 0.0
+    conduct: float = 0.0
+    closing: float = 0.0
+
+
+class SalesEvaluationResult(BaseModel):
+    score: float
+    summary: str
+    reasoning: str = ""
+    strengths: List[str] = []
+    areas_for_improvement: List[str] = []
+    opening: dict = {}
+    qualifying_questions: dict = {}
+    offers_presented: List[str] = []
+    offers_skipped_incorrectly: List[str] = []
+    offer_details: List[OfferDetail] = []
+    closing: dict = {}
+    violations: Optional[SalesViolations] = None
+    penalties: List[SalesPenalty] = []
+    score_breakdown: Optional[SalesScoreBreakdown] = None

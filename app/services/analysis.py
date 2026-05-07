@@ -3,7 +3,7 @@ import time
 import re
 from groq import Groq
 from app.config import get_settings
-from app.schemas import EvaluationResult
+from app.schemas import EvaluationResult, SalesEvaluationResult
 
 settings = get_settings()
 groq_client = Groq(api_key=settings.GROQ_API_KEY)
@@ -151,11 +151,56 @@ def build_system_message(
     campaign_prompt: str,
     campaign_type: str,
     agent_name: str = None,
-    transfer_detected: bool = False
+    transfer_detected: bool = False,
+    transfer_point_sec: float = None
 ) -> str:
-    outcome_extraction = _build_campaign_outcome_prompt(campaign_type)
     agent_label = f'"{ agent_name}"' if agent_name else '"Agent"'
 
+    if transfer_detected and transfer_point_sec is not None:
+        transfer_banner = (
+            f"🔄 TRANSFER DETECTED: This call contains a call transfer.\n"
+            f"⏱ TRANSFER POINT: {transfer_point_sec:.1f}s into the call.\n"
+            f"⛔ HARD BOUNDARY: Do NOT evaluate ANY segment with a start "
+            f"timestamp greater than {transfer_point_sec:.1f}s."
+        )
+    elif transfer_detected:
+        transfer_banner = "🔄 TRANSFER DETECTED: This call contains a call transfer."
+    else:
+        transfer_banner = ""
+
+    transfer_note = f"""⚠️ MULTI-PARTY CALLS & TRANSFERS:
+{transfer_banner}
+Some calls involve a transfer or conference where a third party
+joins mid-call (e.g., a debt relief agent, supervisor, or vendor).
+In such cases:
+- The ORIGINAL agent being evaluated is: {agent_label}
+- After a transfer, the new speaker labeled "Customer" may actually
+  be a representative from another company (NOT the customer).
+- Evaluate ONLY the original agent {agent_label} — their segments
+  appear BEFORE the transfer point.
+- Do NOT evaluate the third-party representative as the agent.
+- Do NOT penalize the agent for what the third-party says after transfer.
+- The agent's score should reflect only the pre-transfer interaction."""
+
+    artifact_note = """⚠️ TRANSCRIPT ARTIFACTS:
+WhisperX may produce repeated identical phrases during silence or hold music.
+Example: the same sentence repeated 10+ times in a row = audio artifact, NOT real speech.
+- Ignore any phrase repeated more than 3 times consecutively.
+- Do NOT penalize the agent for transcription artifacts."""
+
+    # ✅ Sales campaigns: prompt IS the full system message
+    if campaign_type == "sales":
+        return f"""{campaign_prompt}
+
+AGENT IDENTITY: The agent being evaluated is {agent_label}.
+
+{transfer_note}
+
+{artifact_note}
+"""
+
+    # All other types: use existing wrapper
+    outcome_extraction = _build_campaign_outcome_prompt(campaign_type)
     return f"""
 You are an Expert Quality Assurance (QA) Manager evaluating a recorded customer service call.
 
@@ -165,27 +210,9 @@ You are an Expert Quality Assurance (QA) Manager evaluating a recorded customer 
 The transcript contains segments with a "speaker" field of either "Agent" or "Customer".
 The Agent being evaluated is: {agent_label}
 
-⚠️ MULTI-PARTY CALLS & TRANSFERS:
-{"🔄 TRANSFER DETECTED: This call contains a call transfer." if transfer_detected else ""}
-Some calls involve a transfer or conference where a third party joins mid-call
-(e.g., a debt relief agent, supervisor, or vendor). In such cases:
-- The ORIGINAL agent being evaluated is: {agent_label}
-- After a transfer, the new speaker labeled "Customer" may actually be
-  a representative from another company (NOT the customer).
-- Evaluate ONLY the original agent {agent_label} — their segments
-  appear BEFORE the transfer point.
-- Segments AFTER the phrase "I'm going to put you through" /
-  "I'll transfer you" / "let me connect you" / "I'm going to go ahead
-  and put her through" belong to the RECEIVING party, not the agent.
-- Do NOT evaluate the third-party representative as the agent.
-- Do NOT penalize the agent for what the third-party says after transfer.
-- The agent's score should reflect only the pre-transfer interaction.
+{transfer_note}
 
-⚠️ TRANSCRIPT ARTIFACTS:
-WhisperX may produce repeated identical phrases during silence or hold music.
-Example: the same sentence repeated 10+ times in a row = audio artifact, NOT real speech.
-- Ignore any phrase repeated more than 3 times consecutively.
-- Do NOT penalize the agent for transcription artifacts.
+{artifact_note}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🎯 CAMPAIGN EVALUATION RULES
@@ -267,7 +294,13 @@ def evaluate_transcript(transcript: str, campaign_prompt: str, campaign_type: st
     Dynamically injects campaign-type-specific extraction rules.
     """
     
-    system_message = build_system_message(campaign_prompt, campaign_type, agent_name, transfer_detected)
+    system_message = build_system_message(
+        campaign_prompt,
+        campaign_type,
+        agent_name,
+        transfer_detected,
+        transfer_point_sec
+    )
 
     max_retries = 3
     retry_delay = 5
@@ -316,6 +349,42 @@ def evaluate_transcript(transcript: str, campaign_prompt: str, campaign_type: st
             result_dict["reasoning"] = reasoning
             result_dict["summary"] = summary
 
+            # ✅ Route to correct schema
+            if campaign_type == "sales":
+                sales_result = SalesEvaluationResult(**result_dict)
+
+                # Build weaknesses list from score_breakdown for DB compatibility
+                breakdown = sales_result.score_breakdown
+                weaknesses = []
+                if breakdown:
+                    for field, val in breakdown.model_dump().items():
+                        max_pts = {
+                            "opening": 10,
+                            "script_compliance": 30,
+                            "customer_handling": 20,
+                            "conduct": 25,
+                            "closing": 15
+                        }
+                        deducted = max_pts.get(field, 0) - val
+                        if deducted > 0:
+                            weaknesses.append({
+                                "issue": field.replace("_", " ").title(),
+                                "detail": f"Score: {val}/{max_pts.get(field,0)}",
+                                "deduction": deducted
+                            })
+
+                return EvaluationResult(
+                    score=sales_result.score,
+                    summary=sales_result.summary,
+                    reasoning=sales_result.reasoning,
+                    strengths=[{"issue": s, "detail": ""} for s in sales_result.strengths],
+                    weaknesses=weaknesses,
+                    opening_ok=sales_result.opening.get("identified_company", False),
+                    closing_ok=sales_result.closing.get("professional_farewell", False),
+                    raw_sales_data=sales_result.model_dump()
+                )
+
+            # Non-sales: existing parsing
             validated_result = EvaluationResult(**result_dict)
             
             # Manual Score Calculation
