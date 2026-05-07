@@ -61,12 +61,30 @@ export function InteractiveTranscript({ transcript, currentTime, onSeek, agentNa
     activeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [activeId]);
 
+  const ANNOUNCEMENT_PATTERNS = [
+    "this call is being recorded",
+    "this call may be recorded",
+    "this call is recorded",
+    "your call may be monitored",
+    "calls may be recorded",
+    "this call is monitored",
+  ];
+
+  const displaySegments = (segments ?? []).filter((seg) => {
+    const startSec =
+      typeof seg.start === "string" ? parseFloat(seg.start) : seg.start;
+    if (startSec >= 5.0) return true;
+    return !ANNOUNCEMENT_PATTERNS.some((p) =>
+      seg.text.trim().toLowerCase().includes(p)
+    );
+  });
+
   const filteredSegments = searchQuery
-    ? segments.filter(s => {
+    ? displaySegments.filter(s => {
         const text = (piiMaskingEnabled && s.redactedText) ? s.redactedText : s.text;
         return text.toLowerCase().includes(searchQuery.toLowerCase());
       })
-    : segments;
+    : displaySegments;
 
   const searchResultCount = filteredSegments.length;
 
@@ -85,7 +103,7 @@ export function InteractiveTranscript({ transcript, currentTime, onSeek, agentNa
           {piiMaskingEnabled ? 'PII Masked' : 'PII Visible'}
         </div>
 
-        <span className="text-xs text-muted-foreground">{segments.length} segments</span>
+        <span className="text-xs text-muted-foreground">{displaySegments.length} segments</span>
       </div>
 
       {/* Search */}
