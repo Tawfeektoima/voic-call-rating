@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "VoiceQA Live Audio Capture",
+  "description": "Captures tab audio and streams it to the VoiceQA Live Pipeline.",
+  "version": "1.0.0",
+  "permissions": [
+    "tabCapture",
+    "offscreen",
+    "storage",
+    "activeTab",
+    "microphone"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Start/Stop Capture"
+  }
+}

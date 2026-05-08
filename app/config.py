@@ -8,6 +8,8 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
     """Central configuration — values are read from .env automatically."""
+    # Feature Flags
+    LIVE_PIPELINE_ENABLED: bool = False
 
     # Database
     DATABASE_URL: str = "sqlite:///./call_rating.db"

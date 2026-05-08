@@ -7,7 +7,7 @@ import psutil
 from celery import Celery
 from datetime import datetime, timezone
 from app.database import SessionLocal
-from app.models import Call, Campaign, CallStatus, SystemLog, CallOutcome, Employee, CallQAPair
+from app.models import Call, Campaign, CallStatus, SystemLog, CallOutcome, Employee, CallQAPair, GoldenPairCandidate, CandidateStatus
 from app.services.transcription import transcriber
 import logging
 
@@ -453,6 +453,24 @@ def process_call_audio_task(self, call_id: int):
             )
             db.add(outcome)
 
+            # --- Phase 7: Self-Improvement Loop (HITL) ---
+            # Nominate candidates for human review if they are high quality
+            if call.evaluation_score >= 85:
+                if eval_result.qa_pairs:
+                    for pair in eval_result.qa_pairs:
+                        # Improvement: Only nominate substantial responses (Word count > 15)
+                        word_count = len(pair.response.split())
+                        if pair.is_golden and word_count > 15:
+                            candidate = GoldenPairCandidate(
+                                call_id=call.id,
+                                campaign_id=call.campaign_id,
+                                question=pair.objection,
+                                answer=pair.response,
+                                score=call.evaluation_score
+                            )
+                            db.add(candidate)
+                            print(f"[HITL] Nominated Golden Pair candidate from Call {call_id}")
+
             db.commit()
             redis_client.publish("call_updates", json.dumps({"call_id": call_id, "status": CallStatus.EVALUATED.value}))
             # Action Item 1: Radar Chart Data Synchronization
@@ -494,3 +512,105 @@ def process_call_audio_task(self, call_id: int):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
+
+
+@celery_app.task(name="evaluate_live_call")
+def evaluate_live_call_task(call_id: int):
+    """
+    Evaluates a live call that already has its transcript assembled.
+    Skips transcription and acoustic analysis to minimize latency.
+    """
+    db = SessionLocal()
+    try:
+        call = db.query(Call).filter(Call.id == call_id).first()
+        if not call:
+            print(f"[!] Live Eval: Call {call_id} not found.")
+            return
+
+        # 1. Start Processing
+        call.status = CallStatus.PROCESSING
+        db.commit()
+        redis_client.publish("call_updates", json.dumps({"call_id": call_id, "status": CallStatus.PROCESSING.value}))
+
+        # 2. Fetch Context
+        campaign = db.query(Campaign).filter(Campaign.id == call.campaign_id).first()
+        employee = db.query(Employee).filter(Employee.id == call.employee_id).first()
+        agent_name = employee.name if employee else "Agent"
+        campaign_type = campaign.type.value if hasattr(campaign.type, 'value') else str(campaign.type)
+
+        # 3. Assemble LLM Transcript from structured JSON
+        # Live calls come with a pre-assembled structured transcript list
+        llm_transcript = "\n".join([
+            f"[{s['start']:05.2f} - {s['end']:05.2f}] {s['speaker']}: {s['text']}"
+            for s in call.transcript
+        ])
+
+        # 4. Evaluate (Reuse existing logic exactly)
+        eval_result = evaluate_transcript(
+            transcript=llm_transcript,
+            campaign_prompt=campaign.evaluation_prompt,
+            campaign_type=campaign_type,
+            agent_name=agent_name,
+            transfer_detected=False,
+            transfer_point_sec=None,
+        )
+
+        # 5. Save results
+        call.reasoning = eval_result.reasoning
+        call.call_summary = eval_result.summary
+        call.evaluation_score = eval_result.score
+        call.strengths = [s.model_dump() if hasattr(s, "model_dump") else s for s in eval_result.strengths]
+        call.weaknesses = [w.model_dump() for w in eval_result.weaknesses]
+        call.opening_ok = eval_result.opening_ok
+        call.closing_ok = eval_result.closing_ok
+        call.dob_verified = eval_result.dob_verified
+
+        # Save Outcomes
+        outcome = CallOutcome(
+            call_id=call.id,
+            campaign_type=campaign_type,
+            primary_outcome=eval_result.primary_outcome,
+            outcome_value=eval_result.outcome_value,
+            follow_up_required=eval_result.follow_up_required,
+            agent_talk_time=call.agent_talk_time or 0.0,
+            customer_talk_time=call.customer_talk_time or 0.0,
+            talk_ratio=0.5, # Placeholder
+            campaign_specific_data=eval_result.campaign_specific_data,
+        )
+        db.add(outcome)
+
+        # --- Phase 7: Self-Improvement Loop (HITL) ---
+        if call.evaluation_score >= 85:
+            if eval_result.qa_pairs:
+                for pair in eval_result.qa_pairs:
+                    word_count = len(pair.response.split())
+                    if pair.is_golden and word_count > 15:
+                        candidate = GoldenPairCandidate(
+                            call_id=call.id,
+                            campaign_id=call.campaign_id,
+                            question=pair.objection,
+                            answer=pair.response,
+                            score=call.evaluation_score
+                        )
+                        db.add(candidate)
+                        print(f"[HITL] Nominated Golden Pair candidate from Live Call {call_id}")
+
+        call.status = CallStatus.EVALUATED
+        call.processed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.commit()
+        redis_client.publish("call_updates", json.dumps({"call_id": call_id, "status": CallStatus.EVALUATED.value}))
+        
+        # Trigger stats aggregation
+        from app.services.aggregation import update_agent_mastery_stats
+        update_agent_mastery_stats(db, call.employee_id)
+        
+        print(f"[*] Live Evaluation complete for Call {call_id}.")
+
+    except Exception as e:
+        logger.error(f"[!] Live Evaluation Error for Call {call_id}: {str(e)}", exc_info=True)
+        if call:
+            call.status = CallStatus.FAILED
+            call.error_message = f"Live Eval Error: {str(e)}"
+            db.commit()
+    finally:
+        db.close()
