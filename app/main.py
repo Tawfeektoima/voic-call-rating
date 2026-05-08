@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
+from prometheus_client import Histogram, Gauge
 
 # Ensure FFmpeg is in PATH for torchcodec/hardware decoding
 # Ensure .venv/Scripts is in PATH if it exists locally
@@ -19,10 +21,35 @@ if os.path.exists(scripts_path) and scripts_path not in os.environ["PATH"]:
 load_dotenv()
 
 from app.database import engine, Base
-from app.routers import audio, analytics, admin, auth, system, export, hr, websocket_router
+from app.routers import audio, analytics, admin, auth, system, export, hr, websocket_router, live, review
 from app.recovery import recover_stuck_tasks
 from app.services.websocket import manager
 from app.config import get_settings
+
+# --- Phase 8: Custom Observability Metrics ---
+# Target p95 < 200ms
+suggestion_latency = Histogram(
+    "voiceqa_suggestion_latency_ms",
+    "Latency of RAG suggestions in ms",
+    buckets=(50, 100, 150, 200, 300, 500, 1000)
+)
+# Target p95 < 350ms
+asr_latency = Histogram(
+    "voiceqa_asr_latency_ms",
+    "Latency of ASR transcription cycles in ms",
+    buckets=(100, 200, 300, 350, 500, 750, 1000)
+)
+# Alert if > 22 GB
+gpu_vram_used = Gauge(
+    "voiceqa_gpu_vram_used_gb",
+    "GPU VRAM usage in GB",
+    ["gpu_id"]
+)
+# Capacity monitor (Limit: 200 agents)
+active_sessions_metric = Gauge(
+    "voiceqa_active_sessions",
+    "Total number of active live sessions"
+)
 
 # Create database tables automatically
 Base.metadata.create_all(bind=engine)
@@ -45,9 +72,28 @@ async def redis_listener():
         await pubsub.unsubscribe("call_updates")
         await r.close()
 
+async def configure_redis_limits():
+    """
+    Ensures Redis has memory limits and eviction policies to prevent exhaustion (Phase 8).
+    Sets maxmemory to 2GB and policy to allkeys-lru.
+    """
+    settings = get_settings()
+    # Use the same redis URL as the broker
+    r = aioredis.from_url(settings.CELERY_BROKER_URL)
+    try:
+        await r.config_set("maxmemory", "2gb")
+        await r.config_set("maxmemory-policy", "allkeys-lru")
+        print("[Redis] Memory management optimized (2GB / allkeys-lru)")
+    except Exception as e:
+        # Some managed Redis services or older versions might restrict CONFIG SET
+        print(f"[Redis Config Warning] Could not apply dynamic limits: {e}")
+    finally:
+        await r.close()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     recover_stuck_tasks()
+    await configure_redis_limits() # Phase 8: Redis optimization
     listener_task = asyncio.create_task(redis_listener())
     yield
     listener_task.cancel()
@@ -58,6 +104,9 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# Instrument the app for Prometheus (Phase 8)
+Instrumentator().instrument(app).expose(app)
 
 # CORS configuration (adjust for production)
 app.add_middleware(
@@ -77,6 +126,8 @@ app.include_router(system.router)
 app.include_router(export.router)
 app.include_router(hr.router)
 app.include_router(websocket_router.router)
+app.include_router(live.router)
+app.include_router(review.router)
 
 
 @app.get("/")
