@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     Column, Integer, String, Float, Text, DateTime,
-    ForeignKey, Enum as SAEnum, JSON, Boolean,
+    ForeignKey, Enum as SAEnum, JSON, Boolean, Index,
 )
 from sqlalchemy.orm import relationship
 
@@ -128,9 +128,10 @@ class Call(Base):
     id               = Column(Integer, primary_key=True, index=True)
     employee_id      = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
     campaign_id      = Column(Integer, ForeignKey("campaigns.id"), nullable=False, index=True)
-    audio_file_path  = Column(String(500), nullable=False)
+    audio_file_path  = Column(String(500), nullable=True) # Nullable for live sessions
     original_filename = Column(String(255), nullable=True)
     audio_duration   = Column(Float, nullable=True) # in seconds
+    source           = Column(String(50), default="uploaded", nullable=False) # Improved (I-03)
 
     # Processing state
     status           = Column(SAEnum(CallStatus), default=CallStatus.PENDING, nullable=False, index=True)
@@ -302,5 +303,73 @@ class SystemLog(Base):
     resolved      = Column(Boolean, default=False)
     created_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+
+# ---------------------------------------------------------------------------
+# Live Pipeline Models (Phase 1)
+# ---------------------------------------------------------------------------
+
+class LiveSessionStatus(str, enum.Enum):
+    ACTIVE   = "active"
+    FLUSHING = "flushing"
+    COMPLETE = "complete"
+
+
+class LiveSession(Base):
+    __tablename__ = "live_sessions"
+
+    id              = Column(String(36), primary_key=True) # UUID
+    agent_id        = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    campaign_id     = Column(Integer, ForeignKey("campaigns.id"), nullable=False, index=True)
+    call_id         = Column(Integer, ForeignKey("calls.id"), nullable=True, index=True)
+    gpu_id          = Column(Integer, default=0, nullable=False) # Dynamic routing target (C-5)
+    status          = Column(SAEnum(LiveSessionStatus), default=LiveSessionStatus.ACTIVE, nullable=False)
+    reconnect_token = Column(String(64), nullable=False)
+    agent_audio_path = Column(String(500), nullable=True) # Stores uploaded microphone file
+    created_at      = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
     def __repr__(self):
-        return f"<SystemLog id={self.id} type={self.error_type}>"
+        return f"<LiveSession id={self.id} status={self.status.value}>"
+
+
+class LiveTranscriptSegment(Base):
+    __tablename__ = "live_transcript_segments"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String(36), ForeignKey("live_sessions.id"), nullable=False)
+    timestamp  = Column(Float, nullable=False)
+    speaker    = Column(String(50), nullable=False)
+    text       = Column(Text, nullable=False)
+
+    __table_args__ = (
+        Index("idx_session_timestamp", "session_id", "timestamp"),
+        Index("idx_session_id", "session_id"),
+    )
+
+    def __repr__(self):
+        return f"<LiveTranscriptSegment(id={self.id}, session_id='{self.session_id}', text='{self.text[:20]}...')>"
+
+
+# ---------------------------------------------------------------------------
+# Self-Improvement Loop Models (Phase 7)
+# ---------------------------------------------------------------------------
+
+class CandidateStatus(str, enum.Enum):
+    PENDING  = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+class GoldenPairCandidate(Base):
+    """
+    Human-in-the-Loop Review Queue for high-quality Q&A pairs.
+    Nominated by AI when evaluation score >= 85 and response is substantial.
+    """
+    __tablename__ = "golden_pair_candidates"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    call_id     = Column(Integer, ForeignKey("calls.id"), nullable=False)
+    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=False)
+    question    = Column(Text, nullable=False) # The customer's objection
+    answer      = Column(Text, nullable=False) # The agent's response
+    score       = Column(Float, nullable=False) # The evaluation score of the call
+    status      = Column(SAEnum(CandidateStatus), default=CandidateStatus.PENDING, nullable=False, index=True)
+    created_at  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

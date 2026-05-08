@@ -416,3 +416,16 @@ class SalesEvaluationResult(BaseModel):
     violations: Optional[SalesViolations] = None
     penalties: List[SalesPenalty] = []
     score_breakdown: Optional[SalesScoreBreakdown] = None
+
+
+# ===========================
+#  Live Pipeline Schemas
+# ===========================
+
+class SessionStartRequest(BaseModel):
+    campaign_id: int
+
+class SessionStartResponse(BaseModel):
+    session_id: str
+    wss_url: str
+    reconnect_token: str
