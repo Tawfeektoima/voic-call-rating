@@ -73,7 +73,7 @@ async function autoStartSession() {
       micGranted: true 
     };
 
-    handleStart(startData).catch(e => console.error('[BG] handleStart failed:', e));
+    startCapture(startData).catch(e => console.error('[BG] startCapture failed:', e));
 
   } catch (e) {
     console.error('[BG] Auto-start sequence failed:', e.message);
@@ -88,8 +88,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('[BG] Message received:', message.type);
 
   if (message.type === 'START_FROM_POPUP') {
-    handleStart(message.data)
-      .then(() => sendResponse({ success: true }))
+    startCapture(message.data)
+      .then((res) => sendResponse(res))
       .catch((err) => {
         console.error('[BG] Start failed:', err);
         sendResponse({ success: false, error: err.message || String(err) });
@@ -113,86 +113,85 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Start Recording Flow
 // ---------------------------------------------------------------------------
 
-async function handleStart(data) {
-  console.log('[BG] Starting capture for session:', data.session_id);
+async function startCapture(sessionData) {
 
-  // Step 1: Get the active CRM tab
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  // Step 1: Get the active tab — MUST destructure the array
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
 
-  if (!tab) {
-    console.error('[BG] No active tab found');
-    throw new Error('No active tab found.');
+  if (!tab || !tab.url) {
+    console.error('[BG] No active tab found')
+    return { success: false, error: 'No active tab found.' }
   }
 
   // Step 2: Block Chrome internal pages
-  if (
-    !tab.url ||
-    tab.url.startsWith('chrome://') ||
-    tab.url.startsWith('chrome-extension://') ||
-    tab.url.startsWith('edge://') ||
-    tab.url === 'about:blank' ||
-    tab.url === 'about:newtab'
-  ) {
-    console.warn('[BG] Capture disabled on internal browser page:', tab.url);
-    throw new Error('Capture is not allowed on Chrome internal pages. Please switch to your CRM tab.');
+  const blockedPrefixes = ['chrome://', 'chrome-extension://', 'edge://', 'about:']
+  if (blockedPrefixes.some(p => tab.url.startsWith(p))) {
+    console.warn('[BG] Cannot capture internal page:', tab.url)
+    return {
+      success: false,
+      error: 'Please open the dialer page first, then start the session.'
+    }
   }
 
-  // Step 3: Get streamId — must be done in background, NOT offscreen
-  // The streamId expires in ~5 seconds, so send to offscreen IMMEDIATELY after
-  let streamId;
+  // Step 3: Get streamId — MUST happen in background, NOT in offscreen
+  // streamId expires in ~5 seconds — send to offscreen IMMEDIATELY after
+  let streamId
   try {
     streamId = await new Promise((resolve, reject) => {
       chrome.tabCapture.getMediaStreamId(
         { targetTabId: tab.id },
         (id) => {
           if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
+            reject(new Error(chrome.runtime.lastError.message))
           } else {
-            resolve(id);
+            resolve(id)
           }
         }
-      );
-    });
+      )
+    })
   } catch (err) {
-    console.error('[BG] tabCapture.getMediaStreamId failed:', err.message);
-    throw new Error(`Tab capture failed: ${err.message}`);
+    console.error('[BG] getMediaStreamId failed:', err.message)
+    return { success: false, error: `Tab capture failed: ${err.message}` }
   }
 
-  if (!streamId) throw new Error('Failed to get tab capture stream ID');
-  console.log('[BG] Got streamId for tab:', tab.id, tab.url);
+  if (!streamId) {
+    return { success: false, error: 'Failed to get tab stream ID.' }
+  }
 
-  // Step 4: Ensure offscreen document exists
-  const hasOffscreen = await chrome.offscreen.hasDocument();
-  if (!hasOffscreen) {
-    console.log('[BG] Creating offscreen document...');
+  console.log('[BG] streamId acquired for tab:', tab.id, tab.url)
+
+  // Step 4: Create offscreen document if not exists
+  const hasDoc = await chrome.offscreen.hasDocument()
+  if (!hasDoc) {
+    console.log('[BG] Creating offscreen document...')
     await chrome.offscreen.createDocument({
       url: 'offscreen.html',
       reasons: ['USER_MEDIA'],
       justification: 'Capture tab audio and agent microphone for quality assurance'
-    });
-    console.log('[BG] Offscreen document created.');
+    })
+    console.log('[BG] Offscreen document created.')
   }
 
-  // Step 5: Send streamId + session data to offscreen (no delay after getMediaStreamId)
-  // Set state AFTER successful streamId acquisition
-  isRecording = true;
-  chrome.action.setBadgeText({ text: 'REC' });
-  chrome.action.setBadgeBackgroundColor({ color: '#FF0000' });
-  chrome.storage.local.set({ is_recording: true });
-
+  // Step 5: Send to offscreen — NO await between getMediaStreamId and here
   chrome.runtime.sendMessage({
     target: 'offscreen',
-    type: 'START_RECORDING',
+    type: 'STARTRECORDING',
     data: {
       streamId,
-      session_id: data.session_id,
-      reconnect_token: data.reconnect_token,
-      apiUrl: data.apiUrl,
-      micGranted: data.micGranted ?? true
+      sessionId:      sessionData.session_id,
+      reconnectToken: sessionData.reconnect_token,
+      apiUrl:         sessionData.apiUrl || 'ws://localhost:8000',
+      micGranted:     sessionData.micGranted ?? true
     }
-  });
+  })
 
-  console.log('[BG] START_RECORDING sent to offscreen document.');
+  // Step 6: Set recording state ONLY after success
+  isRecording = true
+  chrome.action.setBadgeText({ text: 'REC' })
+  chrome.action.setBadgeBackgroundColor({ color: '#FF0000' })
+  chrome.storage.local.set({ is_recording: true })
+
+  return { success: true }
 }
 
 

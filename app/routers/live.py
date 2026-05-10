@@ -149,6 +149,10 @@ async def live_audio_websocket(
                 # Receive binary audio data (raw PCM)
                 data = await websocket.receive_bytes()
                 
+                # --- KEEP-ALIVE PING ---
+                if len(data) == 0:
+                    continue  # Ignore empty keepalive packets
+                
                 # --- FIXED-OFFSET SLICER ---
                 if len(data) == 6400:
                     customer_data = data[0:3200]

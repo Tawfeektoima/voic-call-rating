@@ -12,6 +12,7 @@ let scriptProcessor = null;
 let mediaStream     = null;
 let webSocket       = null;
 let audioBuffer     = [];
+let keepAliveInterval = null;
 
 const TARGET_SAMPLE_RATE = 16000;
 const CHUNK_DURATION_MS  = 100; // 100ms window
@@ -35,15 +36,15 @@ let wsConnected = false;
 chrome.runtime.onMessage.addListener(async (message) => {
   if (message.target !== 'offscreen') return;
 
-  if (message.type === 'START_RECORDING') {
-    console.log('[Offscreen] START_RECORDING received');
+  if (message.type === 'STARTRECORDING') {
+    console.log('[Offscreen] STARTRECORDING received');
     try {
-      currentSessionId = message.data.session_id;
+      currentSessionId = message.data.sessionId;
       currentApiUrl    = message.data.apiUrl;
       micGranted       = message.data.micGranted || false;
       chunksSent       = 0;
 
-      await connectWebSocket(currentSessionId, message.data.reconnect_token, currentApiUrl);
+      await connectWebSocket(currentSessionId, message.data.reconnectToken, currentApiUrl);
       
       // Start both captures in parallel
       await Promise.all([
@@ -66,41 +67,49 @@ chrome.runtime.onMessage.addListener(async (message) => {
 // ---------------------------------------------------------------------------
 // Customer Capture (Tab Audio)
 // ---------------------------------------------------------------------------
-async function startTabCapture({ streamId }) {
+async function startTabCapture(data) {
   console.log('[Offscreen] Getting tab media stream...');
   try {
-    mediaStream = await navigator.mediaDevices.getUserMedia({
+    const tabStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         mandatory: {
           chromeMediaSource: 'tab',
-          chromeMediaSourceId: streamId
+          chromeMediaSourceId: data.streamId,
+          echoCancellation: false
         }
-      }
+      },
+      video: false
     });
+
+    mediaStream = tabStream; // Save to global for cleanup
+
+    audioContext = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+    const source = audioContext.createMediaStreamSource(tabStream);
+    scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+
+    // ✅ This line prevents audio muting (passthrough to speakers)
+    source.connect(audioContext.destination);
+
+    scriptProcessor.onaudioprocess = (event) => {
+      const inputData = event.inputBuffer.getChannelData(0);
+      for (let i = 0; i < inputData.length; i++) {
+        audioBuffer.push(inputData[i]);
+      }
+
+      while (audioBuffer.length >= SAMPLES_PER_CHUNK) {
+        const customerSamples = audioBuffer.splice(0, SAMPLES_PER_CHUNK);
+        buildAndSendMuxedPacket(customerSamples);
+      }
+    };
+
+    source.connect(scriptProcessor);
+    scriptProcessor.connect(audioContext.destination);
+    console.log('[Offscreen] ✅ Tab capture connected — audio passthrough enabled.');
+
   } catch (err) {
-    console.error('[Offscreen] Tab capture failed:', err.message);
+    console.error('[Offscreen] Tab capture failed:', err.name, err.message);
     throw err;
   }
-
-  audioContext = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
-  const source = audioContext.createMediaStreamSource(mediaStream);
-  scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
-
-  scriptProcessor.onaudioprocess = (event) => {
-    const inputData = event.inputBuffer.getChannelData(0);
-    for (let i = 0; i < inputData.length; i++) {
-      audioBuffer.push(inputData[i]);
-    }
-
-    while (audioBuffer.length >= SAMPLES_PER_CHUNK) {
-      const customerSamples = audioBuffer.splice(0, SAMPLES_PER_CHUNK);
-      buildAndSendMuxedPacket(customerSamples);
-    }
-  };
-
-  source.connect(scriptProcessor);
-  scriptProcessor.connect(audioContext.destination);
-  console.log('[Offscreen] Customer tab capture connected.');
 }
 
 // ---------------------------------------------------------------------------
@@ -109,6 +118,10 @@ async function startTabCapture({ streamId }) {
 async function startAgentPcmCapture() {
   console.log('[Offscreen] Starting agent PCM capture...');
   try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const mics = devices.filter(d => d.kind === 'audioinput');
+    console.log('[Offscreen] Available mics:', mics.length, mics.map(m => m.label));
+
     agentMediaStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: true,
@@ -117,6 +130,9 @@ async function startAgentPcmCapture() {
       },
       video: false
     });
+
+    console.log('[Offscreen] ✅ Agent mic connected:', agentMediaStream.getAudioTracks()[0].label);
+
     agentAudioContext = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
     const source = agentAudioContext.createMediaStreamSource(agentMediaStream);
     agentScriptProcessor = agentAudioContext.createScriptProcessor(4096, 1, 1);
@@ -129,9 +145,9 @@ async function startAgentPcmCapture() {
     };
     source.connect(agentScriptProcessor);
     agentScriptProcessor.connect(agentAudioContext.destination);
-    console.log('[Offscreen] Agent mic capture connected.');
+    console.log('[Offscreen] Agent mic processing chain connected.');
   } catch (err) {
-    console.error('[Offscreen] Agent mic capture failed:', err.name, err.message);
+    console.error('[Offscreen] ❌ Agent mic failed:', err.name, err.message);
 
     if (err.name === 'NotAllowedError') {
       console.warn('[Offscreen] Mic denied — agent channel will send silence.');
@@ -207,6 +223,17 @@ async function connectWebSocket(session_id, reconnect_token, apiUrl) {
       wsConnected = true;
       console.log('[Offscreen] WebSocket CONNECTED');
       reportStatus('connected', 'WebSocket connected');
+
+      // Keepalive every 20 seconds to prevent service worker sleep
+      keepAliveInterval = setInterval(() => {
+        if (webSocket && webSocket.readyState === WebSocket.OPEN) {
+          webSocket.send(new ArrayBuffer(0)); // empty packet as ping
+          console.log('[Offscreen] Keepalive sent.');
+        } else {
+          clearInterval(keepAliveInterval);
+        }
+      }, 20 * 1000);
+
       resolve();
     };
 
@@ -232,6 +259,7 @@ async function connectWebSocket(session_id, reconnect_token, apiUrl) {
       wsConnected = false;
       console.warn('[Offscreen] WebSocket CLOSED. Code:', event.code);
       reportStatus('closed', `WebSocket closed: ${event.code}`);
+      clearInterval(keepAliveInterval); // Stop keepalive
     };
 
     setTimeout(() => {
@@ -260,6 +288,7 @@ async function stopAll() {
   }
 
   stopAgentPcmCapture();
+  clearInterval(keepAliveInterval); // Stop keepalive
 
   if (webSocket) {
     if (webSocket.readyState === WebSocket.OPEN) {
