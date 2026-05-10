@@ -69,6 +69,12 @@ class UserLogin(BaseModel):
     email: str
     password: str
 
+class MeResponse(BaseModel):
+    id: int
+    name: str
+    campaign_id: int
+    role: str
+
 class CampaignCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None

@@ -16,13 +16,36 @@ os.makedirs(db_path, exist_ok=True)
 chroma_client = chromadb.PersistentClient(path=db_path)
 collection = chroma_client.get_or_create_collection(name="agent_suggestions")
 
-# Local Embeddings: SentenceTransformers (all-MiniLM-L6-v2)
+# Local Embeddings: Lazy-loaded SentenceTransformers (all-MiniLM-L6-v2)
 # This model runs locally on CPU/GPU and provides high-quality 384d embeddings
-print("Loading local embedding model (all-MiniLM-L6-v2)...")
-model = SentenceTransformer('all-MiniLM-L6-v2')
+_model = None
+
+def _get_model():
+    """Lazy-load the embedding model on first use, not at import time."""
+    global _model
+    if _model is None:
+        print("Loading local embedding model (all-MiniLM-L6-v2)...")
+        # Temporarily remove HF_TOKEN if it's expired — this is a PUBLIC model
+        # and an expired token causes 401 errors even on public repos
+        saved_token = os.environ.pop("HF_TOKEN", None)
+        saved_token2 = os.environ.pop("HUGGING_FACE_HUB_TOKEN", None)
+        try:
+            _model = SentenceTransformer('all-MiniLM-L6-v2', token=False)
+            print("Embedding model loaded successfully.")
+        except Exception as e:
+            print(f"WARNING: Failed to load embedding model: {e}")
+            print("RAG suggestions will be disabled.")
+        finally:
+            # Restore tokens for other services (pyannote, etc.)
+            if saved_token:
+                os.environ["HF_TOKEN"] = saved_token
+            if saved_token2:
+                os.environ["HUGGING_FACE_HUB_TOKEN"] = saved_token2
+    return _model
 
 # Redis Cache for RAG Suggestions
 redis_client = aioredis.from_url("redis://localhost:6379", decode_responses=True)
+
 
 def get_company_trigger_keywords(company_id: int) -> List[str]:
     """
@@ -62,6 +85,9 @@ async def get_agent_suggestion(
 
         # 3. Local Embedding Generation
         # This is the most compute-intensive part, handled locally
+        model = _get_model()
+        if model is None:
+            return None  # RAG disabled — model failed to load
         loop = asyncio.get_event_loop()
         query_embedding = await loop.run_in_executor(None, model.encode, transcript_text)
         query_embedding = query_embedding.tolist()
