@@ -5,7 +5,7 @@ from jose import JWTError, jwt
 
 from app.database import get_db
 from app.models import Employee, UserRole
-from app.schemas import UserRegister, UserLogin, EmployeeOut
+from app.schemas import UserRegister, UserLogin, EmployeeOut, MeResponse
 from app.security import verify_password, get_password_hash, create_access_token, SECRET_KEY, ALGORITHM
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
@@ -89,3 +89,17 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     if user is None:
         raise credentials_exception
     return user
+
+@router.get("/me", response_model=MeResponse)
+def get_me(current_user: Employee = Depends(get_current_user)):
+    """
+    Returns the currently authenticated employee's details,
+    including an assigned campaign_id for auto-starting sessions.
+    """
+    return {
+        "id": current_user.id,
+        "name": current_user.name,
+        "email": current_user.email,
+        "role": current_user.role,
+        "campaign_id": 1 # Default fallback campaign id, should be fetched from DB if employee is tied to a specific campaign
+    }

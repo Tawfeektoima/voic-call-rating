@@ -1,4 +1,7 @@
+import asyncio
+import time
 import numpy as np
+import warnings
 from typing import Optional
 from app.workers.rag_worker import get_agent_suggestion
 from app.database import SessionLocal
@@ -6,8 +9,17 @@ from app.models import LiveTranscriptSegment
 import redis
 import os
 
+# Suppress warnings in the worker process
+warnings.filterwarnings("ignore", category=UserWarning)
+
+# ANSI Colors for cleaner logs
+CLR_GREEN = "\033[92m"
+CLR_RESET = "\033[0m"
+
 # C-6: Concurrency limit for GPU protection
 # Caps the number of simultaneous WhisperX tasks to prevent OOM
+gpu_semaphore = asyncio.Semaphore(2)  # Max 2 concurrent transcriptions (RTX 3050 safe)
+
 # C-5: Dynamic GPU Session Routing
 # Connect to Redis for heartbeats and load tracking
 redis_hb = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
@@ -34,6 +46,16 @@ async def start_heartbeat_loop(get_active_count_func):
         await publish_gpu_heartbeat(get_active_count_func())
         await asyncio.sleep(5) # 5-second interval
 
+def _is_voice_active(pcm_bytes: bytes, threshold: float = 0.01) -> bool:
+    """
+    Returns True if the chunk contains actual speech energy.
+    Filters out silence/hold music before hitting WhisperX.
+    Threshold 0.01 RMS works well for 16-bit PCM in practice.
+    """
+    samples = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+    rms = np.sqrt(np.mean(samples ** 2))
+    return rms > threshold
+
 class SessionASRBuffer:
     """
     Manages a rolling audio buffer for a live session.
@@ -45,6 +67,7 @@ class SessionASRBuffer:
         self.company_id = company_id
         self.buffer = bytearray()
         self.queue = asyncio.Queue()
+        self.last_text = ""  # For deduplication (I-03)
         
         # Buffer Config (16kHz, 16-bit Mono PCM)
         # 16,000 samples/sec * 2 bytes/sample = 32,000 bytes/sec
@@ -56,7 +79,20 @@ class SessionASRBuffer:
         self.worker_task = asyncio.create_task(self._process_loop())
 
     async def push(self, chunk: bytes):
-        """Non-blocking push of binary audio data."""
+        """
+        STRICT CONTRACT: Accepts ONLY customer audio — exactly 3200 bytes
+        (1600 samples × 2 bytes, 16-bit mono PCM at 16kHz = 100ms).
+        Agent audio must NEVER enter this method.
+        """
+        assert len(chunk) == 3200, (
+            f"[ASR GUARD] Wrong chunk size {len(chunk)}. "
+            f"Only customer_data[0:3200] is allowed here."
+        )
+
+        # Energy-based VAD: skip silent chunks to reduce GPU usage
+        if not _is_voice_active(chunk):
+            return   # Do not send silence to WhisperX
+
         await self.queue.put(chunk)
 
     async def flush(self):
@@ -109,7 +145,13 @@ class SessionASRBuffer:
                 # In Phase 5, we will call WhisperX here.
                 text = "How much does the subscription cost?" if "cost" not in self.session_id else "I'll take it."
                 
+                # Deduplication logic (I-03)
+                if text == self.last_text:
+                    return
+                self.last_text = text
+
                 print(f"[ASR {self.session_id}] GPU processing {len(audio_float32)} samples at {timestamp}s...")
+                print(f"{CLR_GREEN}-> Detected Speech: {text}{CLR_RESET}")
                 
                 # Persist segment to Database for QA Integration (Phase 6)
                 db = SessionLocal()

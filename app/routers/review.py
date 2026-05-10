@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 import uuid
 from app.database import get_db
 from app.models import GoldenPairCandidate, CandidateStatus
-from app.workers.rag_worker import collection, model
+from app.workers.rag_worker import collection, _get_model
 
 router = APIRouter(prefix="/api/review", tags=["HITL Review"])
 
@@ -50,6 +50,9 @@ def approve_candidate(candidate_id: int, db: Session = Depends(get_db)):
         
         # 2. Local RAG Indexing (Phase 5 Logic)
         # Generate embedding locally using the shared model instance
+        model = _get_model()
+        if model is None:
+            raise HTTPException(status_code=503, detail="RAG model not available")
         embedding = model.encode(candidate.question).tolist()
         
         # Add to the local ChromaDB collection

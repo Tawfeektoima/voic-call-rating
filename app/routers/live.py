@@ -85,33 +85,6 @@ async def start_live_session(
         reconnect_token=new_session.reconnect_token
     )
 
-@router.post("/session/{session_id}/upload_agent_audio")
-async def upload_agent_audio(
-    session_id: str,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db)
-):
-    """
-    Receives the microphone recording from the Chrome extension at the end of a session.
-    Stores the file for post-session transcript merging.
-    """
-    session = db.query(LiveSession).filter(LiveSession.id == session_id).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-        
-    import os
-    os.makedirs("uploads/live_mic", exist_ok=True)
-    file_path = f"uploads/live_mic/{session_id}_agent.webm"
-    
-    with open(file_path, "wb") as f:
-        f.write(await file.read())
-        
-    session.agent_audio_path = file_path
-    db.commit()
-    
-    print(f"[Live] Agent audio uploaded for session {session_id}")
-    return {"status": "success", "file_path": file_path}
-
 
 # ---------------------------------------------------------------------------
 # WebSocket Audio Ingestion (Task 2)
@@ -163,9 +136,12 @@ async def live_audio_websocket(
         # 2. Audio Format Negotiation (Fixing C-2)
         await websocket.send_json({
             "event": "connected",
-            "expected_format": "pcm_16000_16bit_mono",
-            "chunk_duration_ms": 500
+            "expected_format": "pcm_16000_16bit_mono_muxed",
+            "chunk_duration_ms": 100
         })
+
+        import time
+        from app.services.agent_archive import archive_agent_chunk
 
         # 3. Audio Ingestion Loop
         try:
@@ -173,13 +149,34 @@ async def live_audio_websocket(
                 # Receive binary audio data (raw PCM)
                 data = await websocket.receive_bytes()
                 
-                # Forward to ASR rolling buffer (Phase 4)
-                await asr_buffer.push(data)
+                # --- FIXED-OFFSET SLICER ---
+                if len(data) == 6400:
+                    customer_data = data[0:3200]
+                    agent_data    = data[3200:6400]
+                elif len(data) == 3200:
+                    # Backward-compatibility: legacy single-channel packet during rollout
+                    customer_data = data
+                    agent_data    = bytes(3200)   # silence padding
+                else:
+                    continue   # reject malformed packets silently
+
+                chunk_ts = time.time()   # Unix timestamp for post-call alignment
+
+                # PATH A: Customer audio → ASR Worker (GPU)
+                await asr_buffer.push(customer_data) # Using the existing push method which is now updated to enforce 3200 bytes
+
+                # PATH B: Agent audio → Redis Archive (NO GPU, NO transcription)
+                try:
+                    await archive_agent_chunk(session_id, agent_data, chunk_ts)
+                except Exception as redis_err:
+                    print(f"[WS] Redis archive failed (non-fatal): {redis_err}")
                 
         except WebSocketDisconnect:
-            print(f"Live Session {session_id} disconnected gracefully.")
+            print(f"[WS] Session {session_id} disconnected normally.")
         except Exception as e:
-            print(f"Live Session {session_id} encountered an error: {str(e)}")
+            import traceback
+            print(f"[WS CRASH] Session {session_id}: {e}")
+            print(traceback.format_exc())
             
     finally:
         # Ensure buffer is flushed

@@ -2,7 +2,39 @@ from sqlalchemy.orm import Session
 from app.models import LiveSession, LiveTranscriptSegment, Call, LiveSessionStatus, CallStatus
 from app.worker import evaluate_live_call_task
 from app.services.transcription import transcriber
+from app.services.agent_archive import read_agent_stream, flush_agent_stream
 import asyncio
+import io
+import wave
+import os
+
+async def _assemble_agent_wav(session_id: str) -> str | None:
+    """
+    Reads agent PCM chunks from Redis, assembles a 16kHz mono WAV file,
+    saves it to /tmp, and returns the file path. Returns None if no data.
+    """
+    chunks = await read_agent_stream(session_id)
+    if not chunks:
+        print(f"[Flush {session_id}] No agent audio in Redis stream.")
+        await flush_agent_stream(session_id) # Cleanup even if empty to avoid stale keys
+        return None
+
+    pcm_concat = b"".join(pcm for _, pcm in chunks)   # already sorted by timestamp
+
+    temp_path = f"/tmp/agent_{session_id}.wav"
+    
+    # Ensure /tmp directory exists on Windows just in case
+    os.makedirs("/tmp", exist_ok=True)
+
+    with wave.open(temp_path, 'wb') as wf:
+        wf.setnchannels(1)    # Mono
+        wf.setsampwidth(2)    # 16-bit
+        wf.setframerate(16000)  # STRICT: 16kHz
+        wf.writeframes(pcm_concat)
+
+    await flush_agent_stream(session_id)   # cleanup Redis immediately
+    return temp_path
+
 
 async def flush_live_session(session_id: str, db: Session):
     """
@@ -19,24 +51,14 @@ async def flush_live_session(session_id: str, db: Session):
         session.status = LiveSessionStatus.FLUSHING
         db.commit()
 
-        # 2. Wait for Agent Microphone Upload (Timeout: 2 minutes)
-        # Improvement: Handle disconnections by waiting for the extension to upload the mic recording
-        wait_time = 0
-        while not session.agent_audio_path and wait_time < 120:
-            await asyncio.sleep(5)
-            wait_time += 5
-            db.refresh(session)
-            if session.agent_audio_path:
-                print(f"[Flush {session_id}] Agent audio detected after {wait_time}s.")
-                break
-
         # 3. Transcribe Agent Voice (Post-Call to save GPU)
         agent_segments = []
-        if session.agent_audio_path:
-            print(f"[Flush {session_id}] Transcribing agent-side recording...")
+        agent_wav_path = await _assemble_agent_wav(session_id)
+        if agent_wav_path:
+            print(f"[Flush {session_id}] Transcribing agent audio post-call (batch mode)...")
             try:
                 # Reuse the standard transcriber (WhisperX)
-                raw_agent, _ = transcriber.process_audio(session.agent_audio_path)
+                raw_agent, _ = transcriber.process_audio(agent_wav_path)
                 for i, seg in enumerate(raw_agent):
                     agent_segments.append({
                         "id": f"agent_{i}",
@@ -48,6 +70,9 @@ async def flush_live_session(session_id: str, db: Session):
                     })
             except Exception as trans_err:
                 print(f"[Flush {session_id}] Agent transcription failed: {str(trans_err)}")
+            finally:
+                if os.path.exists(agent_wav_path):
+                    os.remove(agent_wav_path)
 
         # 4. Data Assembly (Customer Side)
         customer_segments_raw = db.query(LiveTranscriptSegment)\
@@ -75,7 +100,8 @@ async def flush_live_session(session_id: str, db: Session):
             employee_id=session.agent_id,
             campaign_id=session.campaign_id,
             transcript=full_transcript,
-            audio_file_path=None,
+            audio_file_path=agent_wav_path or f"live://session/{session_id}",
+            original_filename=f"live_{session_id}.wav",
             source="live", # CRITICAL: I-03 Source Flag
             status=CallStatus.PENDING
         )
