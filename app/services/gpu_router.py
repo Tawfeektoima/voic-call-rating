@@ -1,4 +1,5 @@
 import redis
+import os
 from typing import List
 
 # Setup Redis client for router (Shared with ASR heartbeat)
@@ -10,11 +11,19 @@ async def get_best_gpu() -> int:
     Finds the healthy GPU (with active heartbeat) that has the lowest load.
     
     Returns:
-        int: GPU ID (0, 1, 2, or 3)
+        int: GPU ID
     """
-    AVAILABLE_GPUS = [0, 1, 2, 3] # Standard 4x RTX 3090 setup
-    gpu_stats = []
+    # Detect actual hardware capability (I-10)
+    try:
+        import torch
+        num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+        if num_gpus == 0:
+            return 0 # CPU or no CUDA
+        AVAILABLE_GPUS = list(range(num_gpus))
+    except ImportError:
+        AVAILABLE_GPUS = [0] # Fallback to single GPU 0
 
+    gpu_stats = []
     for gpu_id in AVAILABLE_GPUS:
         heartbeat = redis_router.get(f"gpu:{gpu_id}:heartbeat")
         if heartbeat == "active":

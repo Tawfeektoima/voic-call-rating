@@ -2,6 +2,7 @@ import os
 import uvicorn
 import json
 import asyncio
+import warnings
 import redis.asyncio as aioredis
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
@@ -9,6 +10,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 from prometheus_client import Histogram, Gauge
+
+# Suppress noisy torchcodec/pyannote warnings
+warnings.filterwarnings("ignore", message="torchcodec is not installed correctly")
+warnings.filterwarnings("ignore", module="torchcodec")
+warnings.filterwarnings("ignore", category=UserWarning)
+
+# Disable HuggingFace cache warnings (I-08)
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 # Ensure FFmpeg is in PATH for torchcodec/hardware decoding
 # Ensure .venv/Scripts is in PATH if it exists locally
@@ -95,7 +104,18 @@ async def lifespan(app: FastAPI):
     recover_stuck_tasks()
     await configure_redis_limits() # Phase 8: Redis optimization
     listener_task = asyncio.create_task(redis_listener())
+    
+    # C-5: Start GPU heartbeat so the router knows we're alive
+    from app.workers.asr_worker import start_heartbeat_loop
+    from app.routers.live import active_asr_sessions
+    heartbeat_task = asyncio.create_task(
+        start_heartbeat_loop(lambda: len(active_asr_sessions))
+    )
+    print(f"[Heartbeat] GPU heartbeat loop started.")
+    
     yield
+    
+    heartbeat_task.cancel()
     listener_task.cancel()
 
 app = FastAPI(
@@ -108,10 +128,15 @@ app = FastAPI(
 # Instrument the app for Prometheus (Phase 8)
 Instrumentator().instrument(app).expose(app)
 
-# CORS configuration (adjust for production)
+# CORS configuration — allow React frontend + Chrome Extension origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("FRONTEND_URL", "http://localhost:5173")],
+    allow_origins=[
+        os.getenv("FRONTEND_URL", "http://localhost:5173"),
+        "http://localhost:8000",
+        "http://localhost:3000",
+    ],
+    allow_origin_regex=r"^chrome-extension://.*$",  # Allow ALL Chrome Extensions
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
