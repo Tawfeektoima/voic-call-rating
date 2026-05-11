@@ -9,4 +9,16 @@ dist/
 build/
 .DS_Store
 *.log
+# Private keys
+*.pem
+chrome_extension.pem
 
+# Audio and media files
+uploads/
+*.mp3
+*.wav
+*.m4a
+*.ogg
+
+# Repository snapshots
+repomix-output*.xml
