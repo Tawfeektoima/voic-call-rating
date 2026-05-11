@@ -2,7 +2,7 @@ import { NavLink, useLocation } from 'react-router';
 import {
   LayoutDashboard, Radio, Phone, BarChart3, Star, UserCircle,
   Database, Activity, ChevronLeft, ChevronRight, Shield, Zap,
-  Users, Settings, LogOut, Eye, EyeOff
+  Users, Settings, LogOut, Eye, EyeOff, ShieldAlert
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { cn } from '../ui/utils';
@@ -15,7 +15,7 @@ const navItems = [
   { path: '/success-library', label: 'Success Library', icon: Star, roles: ['admin', 'manager', 'qa', 'agent'] },
   { path: '/agents/a1', label: 'Agent Profiles', agentLabel: 'My Profile', icon: Users, roles: ['admin', 'manager', 'qa', 'agent'] },
   { path: '/data-center', label: 'Data Center', icon: Database, roles: ['admin', 'manager'] },
-  { path: '/hr', label: 'HR Management', icon: UserCircle, roles: ['admin', 'hr_manager'] },
+  { path: '/hr', label: 'HR Dashboard', icon: ShieldAlert, roles: ['admin', 'hr_manager'] },
   { path: '/system-health', label: 'System Health', icon: Activity, roles: ['admin'] },
 ];
 

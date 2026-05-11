@@ -1,4 +1,6 @@
 .env
+.env.docker
+*.env
 __pycache__/
 *.pyc
 uploads/
@@ -22,3 +24,8 @@ uploads/
 
 # Repository snapshots
 repomix-output*.xml
++
++# Local utility scratch scripts
++scripts/scratch/*.py
++!scripts/scratch/.gitkeep
++

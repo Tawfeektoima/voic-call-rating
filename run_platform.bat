@@ -5,6 +5,13 @@ echo        Starting Full Platform Services...
 echo ===================================================
 echo.
 
+echo [WARNING] Checking environment configuration...
+if not exist .env (
+    echo [ERROR] No .env file found! The app may start with SQLite by default.
+    echo         Copy .env.example to .env and configure your settings.
+    pause
+)
+echo.
 echo [1/3] Starting FastAPI Backend on port 8000...
 start "Backend (FastAPI)" cmd /k ".venv\Scripts\uvicorn app.main:app --host 0.0.0.0 --port 8000"
 

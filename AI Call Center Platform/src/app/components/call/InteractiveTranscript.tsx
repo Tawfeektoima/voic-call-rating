@@ -183,6 +183,11 @@ export function InteractiveTranscript({ transcript, currentTime, onSeek, agentNa
                       {piiMaskingEnabled ? 'Redacted' : 'PII'}
                     </span>
                   )}
+                  {segment.needs_review && (
+                    <span className="text-[10px] bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 px-1.5 py-0.5 rounded-full flex items-center gap-1 ml-1">
+                      ⚠️ Low Confidence
+                    </span>
+                  )}
                 </div>
 
                 <p className="text-sm text-foreground leading-relaxed">

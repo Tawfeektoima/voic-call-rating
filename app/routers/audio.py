@@ -7,13 +7,13 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db, SessionLocal
 from app.models import Call, Employee, Campaign, CallStatus
-from app.schemas import CallUploadResponse, CallOut, CallReviewUpdate
+from app.schemas import CallUploadResponse, CallOut, CallReviewUpdate, CallDetailResponse, DeductionItem, ViolationItemOut
 from app.config import get_settings
 from app.services.transcription import transcriber
 from app.services.analysis import evaluate_transcript
 from app.worker import process_call_audio_task
 from app.routers.auth import get_current_user
-from app.models import UserRole
+from app.models import UserRole, AgentViolation
 
 settings = get_settings()
 
@@ -85,7 +85,7 @@ async def upload_audio(
     return CallUploadResponse(call_id=new_call.id)
 
 
-@router.get("/{call_id}", response_model=CallOut)
+@router.get("/{call_id}", response_model=CallDetailResponse)
 def get_call_status(
     call_id: int, 
     db: Session = Depends(get_db),
@@ -100,7 +100,63 @@ def get_call_status(
     if current_user.role == UserRole.AGENT and call.employee_id != current_user.id:
         raise HTTPException(status_code=403, detail="You do not have permission to view this call.")
         
-    return call
+    # Build structured response for UI (Task-UI04)
+    violations = db.query(AgentViolation).filter(AgentViolation.call_id == call_id).all()
+    
+    # Map weaknesses to deductions
+    deductions = []
+    if call.weaknesses:
+        # call.weaknesses is a list of dicts: {"issue": "...", "detail": "...", "deduction": 5}
+        # In validate_json_fields it might already be a list
+        weaknesses_list = call.weaknesses
+        if isinstance(weaknesses_list, str):
+            import json
+            try: weaknesses_list = json.loads(weaknesses_list)
+            except: weaknesses_list = []
+            
+        for w in weaknesses_list:
+            # Try to extract score/max from explicit fields or fallback to string parsing
+            score = w.get("score")
+            max_val = w.get("max_score")
+            
+            if score is None or max_val is None:
+                detail = w.get("detail", "")
+                if "Score:" in detail and "/" in detail:
+                    try:
+                        parts = detail.split("Score:")[1].split("/")
+                        score = float(parts[0].strip())
+                        max_val = float(parts[1].strip())
+                    except: 
+                        score, max_val = 0.0, 0.0
+                else:
+                    score, max_val = 0.0, 0.0
+            
+            deductions.append(DeductionItem(
+                category=w.get("issue", "Unknown"),
+                deduction=float(w.get("deduction", 0)),
+                score=float(score),
+                max=float(max_val)
+            ))
+
+    # Prepare base data
+    response_data = CallOut.model_validate(call).model_dump()
+    
+    # Update with structured UI fields (Task-UI04)
+    response_data.update({
+        "ai_summary": call.call_summary,
+        "strengths": call.strengths or [],
+        "deductions": deductions,
+        "violations": [
+            ViolationItemOut(
+                violation_id=v.violation_id,
+                severity=v.severity,
+                timestamp=v.timestamp_in_call,
+                evidence=v.evidence
+            ) for v in violations
+        ]
+    })
+
+    return CallDetailResponse(**response_data)
 
 
 @router.get("/{call_id}/file")

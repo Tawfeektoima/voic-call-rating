@@ -1,9 +1,29 @@
+# ⚠️ DESTRUCTIVE OPERATION — This script deletes data permanently.
+import argparse
+import sys
 import os
+
+# Add project root to sys.path to allow running from within scripts/ops/
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--confirm",
+    action="store_true",
+    help="Required: confirms you intend to delete all call data permanently."
+)
+args = parser.parse_args()
+
+if not args.confirm:
+    print("Aborted. This is a destructive operation.")
+    print("Pass --confirm to execute: python scripts/ops/purge_db.py --confirm")
+    sys.exit(1)
+
 from app.database import SessionLocal, engine, Base
 from app.models import Call
 from app.config import get_settings
 
-# Create any missing tables (like the new SystemLog)
+# Create any missing tables
 Base.metadata.create_all(bind=engine)
 
 settings = get_settings()
@@ -38,10 +58,5 @@ def purge_data():
         db.close()
 
 if __name__ == "__main__":
-    print("WARNING: This will delete ALL call records and audio files.")
-    confirm = input("Type 'YES' to confirm: ")
-    if confirm == "YES":
-        purge_data()
-        print("Purge complete.")
-    else:
-        print("Operation cancelled.")
+    purge_data()
+    print("Purge complete.")

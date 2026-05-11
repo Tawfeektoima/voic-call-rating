@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router';
 import {
   Play, Pause, SkipBack, SkipForward, Volume2, Download,
   Star, Tag, ChevronLeft, User, Mic, Clock, Target,
-  TrendingUp, Flame, Thermometer, Snowflake, Zap, Loader2
+  Flame, Thermometer, Snowflake, Loader2
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { getCallDetails, getEmployees, getCampaigns } from '../lib/api';
@@ -11,14 +11,15 @@ import { Call, CallStatus, Agent, Campaign } from '../lib/types';
 import { EmotionalWaveform } from '../components/call/EmotionalWaveform';
 import { TalkListenGauge } from '../components/call/TalkListenGauge';
 import { InteractiveTranscript } from '../components/call/InteractiveTranscript';
-import { CallAnalysis } from '../components/call/CallAnalysis';
 import { SalesScoreBreakdown } from '../components/call/SalesScoreBreakdown';
 import { OfferFunnel } from '../components/call/OfferFunnel';
-import { ViolationsPanel } from '../components/call/ViolationsPanel';
-import { PenaltiesTable } from '../components/call/PenaltiesTable';
 import { useApp } from '../context/AppContext';
 import { cn } from '../components/ui/utils';
 import { Skeleton } from '../components/ui/skeleton';
+import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card';
+import { Badge } from '../components/ui/badge';
+import { Separator } from '../components/ui/separator';
+import { ViolationItem } from '../components/call/ViolationItem';
 
 const leadConfig = {
   hot: { icon: Flame, color: 'red', label: 'Hot Lead' },
@@ -41,8 +42,12 @@ export function CallDetail() {
     queryKey: ['call', id],
     queryFn: () => getCallDetails(parseInt(id!)),
     refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      return (status === CallStatus.PENDING || status === CallStatus.PROCESSING) ? 3000 : false;
+      const data = query.state.data;
+      if (!data) return false;
+      const status = data.status;
+      // Stop polling if it's a legacy call stuck in a non-terminal state
+      if (data.id <= 65 && (status === CallStatus.PENDING || status === CallStatus.PROCESSING)) return false;
+      return (status === CallStatus.PENDING || status === CallStatus.PROCESSING) ? 2000 : false;
     }
   });
 
@@ -253,78 +258,147 @@ export function CallDetail() {
                 silenceSeconds={Math.max(0, silenceSeconds)}
               />
 
-              {/* Campaign Specific Insights or Sales Dashboard */}
-              {!isProcessing && (
-                isSalesCall && salesData ? (
-                  <>
-                    <SalesScoreBreakdown breakdown={salesData.score_breakdown} />
-                    <OfferFunnel 
-                      presented={salesData.offers_presented}
-                      skipped={salesData.offers_skipped_incorrectly}
-                      details={salesData.offer_details}
-                    />
-                    <ViolationsPanel violations={salesData.violations} />
-                    <PenaltiesTable penalties={salesData.penalties} />
-                  </>
-                ) : (
-                  call.outcome?.campaign_specific_data && Object.keys(call.outcome.campaign_specific_data).length > 0 && (
-                    <div className="bg-card border border-border rounded-xl p-5 mb-5">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Target size={14} className="text-primary" />
-                        <span className="text-foreground text-sm font-semibold">Business Insights</span>
+                  {/* Campaign Specific Insights or Sales Dashboard */}
+                  {!isProcessing && (
+                    <>
+                  {isSalesCall && salesData ? (
+                    <>
+                      <SalesScoreBreakdown breakdown={salesData.score_breakdown} />
+                      <OfferFunnel 
+                        presented={salesData.offers_presented}
+                        skipped={salesData.offers_skipped_incorrectly}
+                        details={salesData.offer_details}
+                      />
+                    </>
+                  ) : (
+                    call.outcome?.campaign_specific_data && Object.keys(call.outcome.campaign_specific_data).length > 0 && (
+                      <div className="bg-card border border-border rounded-xl p-5 mb-5">
+                        <div className="flex items-center gap-2 mb-3">
+                          <Target size={14} className="text-primary" />
+                          <span className="text-foreground text-sm font-semibold">Business Insights</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          {Object.entries(call.outcome.campaign_specific_data).map(([key, value]) => {
+                            const displayKey = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                            let displayValue = String(value);
+                            if (typeof value === 'boolean') displayValue = value ? 'Yes' : 'No';
+                            
+                            return (
+                              <div key={key} className="bg-secondary/30 rounded-lg p-2.5">
+                                <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">{displayKey}</p>
+                                <p className="text-xs font-medium text-foreground">{displayValue}</p>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        {Object.entries(call.outcome.campaign_specific_data).map(([key, value]) => {
-                          const displayKey = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                          let displayValue = String(value);
-                          if (typeof value === 'boolean') displayValue = value ? 'Yes' : 'No';
-                          
-                          return (
-                            <div key={key} className="bg-secondary/30 rounded-lg p-2.5">
-                              <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">{displayKey}</p>
-                              <p className="text-xs font-medium text-foreground">{displayValue}</p>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )
-                )
+                    )
+                  )}
+                </>
               )}
 
-              {/* AI Summary */}
-              <div className="bg-card border border-border rounded-xl p-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="size-5 rounded bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center">
-                    <Zap size={10} className="text-white" />
+              {/* ── Card 1: AI Summary ── */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    📋 AI Analysis & Summary
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    {call.ai_summary ?? "No analysis available for this call yet."}
+                  </p>
+                </CardContent>
+              </Card>
+
+              {/* ── Card 2: Performance Breakdown ── */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    📊 Performance Breakdown
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+
+                  {/* Strengths */}
+                  <div>
+                    <h4 className="font-semibold text-green-600 mb-2">
+                      ✅ Strengths & Achievements
+                    </h4>
+                    {call.strengths && call.strengths.length > 0 ? (
+                      <ul className="list-disc list-inside text-sm space-y-1">
+                        {call.strengths.map((s, i) => (
+                          <li key={i} className="text-muted-foreground">
+                            {typeof s === 'string' ? s : s.issue}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-muted-foreground italic">
+                        No notable strengths identified in this call.
+                      </p>
+                    )}
                   </div>
-                  <span className="text-foreground text-sm font-semibold">AI Analysis & Summary</span>
-                </div>
-                <div className="space-y-3">
-                  {call.call_summary && (
-                    <p className="text-xs text-foreground leading-relaxed font-medium">
-                      {call.call_summary}
+
+                  <Separator />
+
+                  {/* Deductions */}
+                  <div>
+                    <h4 className="font-semibold text-red-600 mb-2">
+                      ❌ Deductions & Weaknesses
+                    </h4>
+                    {call.deductions && call.deductions.length > 0 ? (
+                      <div className="space-y-2">
+                        {call.deductions.map((d, i) => (
+                          <div key={i} className="flex justify-between text-sm">
+                            <span>{d.category}</span>
+                            <span className="flex gap-4">
+                              <span className="text-red-500 font-medium">{d.deduction}</span>
+                              <span className="text-muted-foreground">
+                                Score: {d.score}/{d.max}
+                              </span>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-green-600 italic">
+                        🎉 Perfect performance! No weaknesses identified.
+                      </p>
+                    )}
+                  </div>
+
+                </CardContent>
+              </Card>
+
+              {/* ── Card 3: Compliance Violations ── */}
+              <Card className={
+                call.violations && call.violations.length > 0
+                  ? "border-red-400 bg-red-50 dark:bg-red-950/20"
+                  : "border-green-400 bg-green-50 dark:bg-green-950/20"
+              }>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    {call.violations && call.violations.length > 0 ? "🚨" : "✅"} Compliance Violations
+                    {call.violations && call.violations.length > 0 && (
+                      <Badge variant="destructive" className="ml-2">
+                        {call.violations.length} Found
+                      </Badge>
+                    )}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {call.violations && call.violations.length > 0 ? (
+                    call.violations.map((v, i) => (
+                      <ViolationItem key={i} violation={v} />
+                    ))
+                  ) : (
+                    <p className="text-sm text-green-600">
+                      No compliance violations detected in this call.
                     </p>
                   )}
-                  {call.reasoning && (
-                    <div className={cn("pt-3 border-t border-border", !call.call_summary && "border-t-0 pt-0")}>
-                      <p className="text-[11px] text-muted-foreground leading-relaxed italic">
-                        <span className="font-bold not-italic text-indigo-400 mr-1">Reasoning:</span>
-                        {call.reasoning}
-                      </p>
-                    </div>
-                  )}
-                  {!call.call_summary && !call.reasoning && (
-                    <p className="text-xs text-muted-foreground italic">No analysis available for this call yet.</p>
-                  )}
-                </div>
-              </div>
-              
-              {/* Balanced Analysis (Strengths & Weaknesses) */}
-              <CallAnalysis
-                strengths={call.strengths || []}
-                weaknesses={call.weaknesses || []}
-              />
+                </CardContent>
+              </Card>
             </div>
 
             {/* Right: Interactive Transcript */}

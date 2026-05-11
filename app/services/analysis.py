@@ -4,6 +4,7 @@ import re
 from groq import Groq
 from app.config import get_settings
 from app.schemas import EvaluationResult, SalesEvaluationResult
+from app.violations import build_violation_prompt
 
 settings = get_settings()
 groq_client = Groq(api_key=settings.GROQ_API_KEY)
@@ -154,6 +155,7 @@ def build_system_message(
     transfer_detected: bool = False,
     transfer_point_sec: float = None
 ) -> str:
+    violation_prompt = build_violation_prompt(campaign_type)
     agent_label = f'"{ agent_name}"' if agent_name else '"Agent"'
 
     if transfer_detected and transfer_point_sec is not None:
@@ -186,11 +188,14 @@ In such cases:
 WhisperX may produce repeated identical phrases during silence or hold music.
 Example: the same sentence repeated 10+ times in a row = audio artifact, NOT real speech.
 - Ignore any phrase repeated more than 3 times consecutively.
-- Do NOT penalize the agent for transcription artifacts."""
+- Do NOT penalize the agent for transcription artifacts.
+- IMPORTANT: Segments marked with [NEEDS_REVIEW] have low transcription confidence and may contain errors. Do NOT flag violations based solely on these segments."""
 
     # ✅ Sales campaigns: prompt IS the full system message
     if campaign_type == "sales":
         return f"""{campaign_prompt}
+
+{violation_prompt}
 
 AGENT IDENTITY: The agent being evaluated is {agent_label}.
 
@@ -213,6 +218,8 @@ The Agent being evaluated is: {agent_label}
 {transfer_note}
 
 {artifact_note}
+
+{violation_prompt}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🎯 CAMPAIGN EVALUATION RULES
@@ -275,7 +282,15 @@ Write "reasoning" FIRST — think step-by-step before calculating score.
   "outcomevalue": null,
   "followuprequired": false,
   "followupdate": null,
-  "campaignspecificdata": {{{{}}}}
+  "campaignspecificdata": {{{{}}}},
+  "violations": [
+    {{{{
+      "violation_id": "exact_key_from_above",
+      "severity": "high|medium|low",
+      "timestamp": "MM:SS or null",
+      "evidence": "direct quote or description"
+    }}}}
+  ]
 }}}}
 
 VALIDATION CHECKLIST before responding:
@@ -293,6 +308,13 @@ def evaluate_transcript(transcript: str, campaign_prompt: str, campaign_type: st
     Forces JSON output adhering to the EvaluationResult schema.
     Dynamically injects campaign-type-specific extraction rules.
     """
+    
+    # 0. Truncate transcript if excessively long (to stay within TPM limits)
+    # 25,000 chars is roughly 5k-7k tokens.
+    MAX_CHARS = 25000 
+    if len(transcript) > MAX_CHARS:
+        print(f"[!] Warning: Transcript for evaluation is too long ({len(transcript)} chars). Truncating to {MAX_CHARS}...")
+        transcript = transcript[:MAX_CHARS] + "\n\n[TRANSCRIPT TRUNCATED DUE TO LENGTH... ONLY PARTIAL EVALUATION POSSIBLE]"
     
     system_message = build_system_message(
         campaign_prompt,
@@ -349,6 +371,41 @@ def evaluate_transcript(transcript: str, campaign_prompt: str, campaign_type: st
             result_dict["reasoning"] = reasoning
             result_dict["summary"] = summary
 
+            # Robust Conversion for Dict formats (Task V07 Fix)
+            
+            # 1. Convert violations dict to list
+            violations_raw = result_dict.get("violations", [])
+            if isinstance(violations_raw, dict):
+                converted_v = []
+                for k, v in violations_raw.items():
+                    if isinstance(v, dict) and v.get("flagged"):
+                        converted_v.append({
+                            "violation_id": k,
+                            "severity": "high",
+                            "timestamp": None,
+                            "evidence": v.get("evidence", ""),
+                        })
+                result_dict["violations"] = converted_v
+                violations_raw = converted_v
+            
+            # 2. Convert offer_details dict to list (for Sales)
+            offer_details = result_dict.get("offer_details", [])
+            if isinstance(offer_details, dict):
+                converted_o = []
+                for name, details in offer_details.items():
+                    if isinstance(details, dict):
+                        converted_o.append({
+                            "offer_name": name,
+                            "presented": details.get("presented", False),
+                            "skip_reason": details.get("skip_reason", ""),
+                            "qualifying_questions_asked": details.get("qualifying_questions_asked", False),
+                            "branch_followed_correctly": details.get("branch_followed_correctly", True),
+                            "walked_through_enrollment": details.get("walked_through_enrollment", False),
+                        })
+                result_dict["offer_details"] = converted_o
+
+            result_dict["raw_violations"] = violations_raw
+
             # ✅ Route to correct schema
             if campaign_type == "sales":
                 sales_result = SalesEvaluationResult(**result_dict)
@@ -370,7 +427,9 @@ def evaluate_transcript(transcript: str, campaign_prompt: str, campaign_type: st
                             weaknesses.append({
                                 "issue": field.replace("_", " ").title(),
                                 "detail": f"Score: {val}/{max_pts.get(field,0)}",
-                                "deduction": deducted
+                                "deduction": deducted,
+                                "score": val,
+                                "max_score": max_pts.get(field, 0)
                             })
 
                 # Robust extraction for opening/closing regardless if dict or object
@@ -396,7 +455,8 @@ def evaluate_transcript(transcript: str, campaign_prompt: str, campaign_type: st
                     weaknesses=weaknesses,
                     opening_ok=opening_ok,
                     closing_ok=closing_ok,
-                    raw_sales_data=sales_result.model_dump()
+                    raw_sales_data=sales_result.model_dump(),
+                    raw_violations=violations_raw
                 )
 
             # Non-sales: existing parsing

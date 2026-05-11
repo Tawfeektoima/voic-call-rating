@@ -8,10 +8,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from app.config import get_settings
+settings = get_settings()
+
 # Configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "your-super-secret-key-for-development")
+SECRET_KEY = settings.SECRET_KEY
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 1 week
+ACCESS_TOKEN_EXPIRE_MINUTES = 60  # 1 hour
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 

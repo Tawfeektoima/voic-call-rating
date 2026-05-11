@@ -9,11 +9,21 @@ def recover_stuck_tasks():
         now = datetime.now(timezone.utc)
         timeout_threshold = now - timedelta(minutes=5)
 
-        stuck_processing = db.query(Call).filter(Call.status == CallStatus.PROCESSING).all()
-        failed_tasks = db.query(Call).filter(Call.status == CallStatus.FAILED).all()
+        # Only recover calls created after the v2 system upgrade (TASK-V07)
+        CUTOFF_ID = 65
+
+        stuck_processing = db.query(Call).filter(
+            Call.status == CallStatus.PROCESSING,
+            Call.id > CUTOFF_ID
+        ).all()
+        failed_tasks = db.query(Call).filter(
+            Call.status == CallStatus.FAILED,
+            Call.id > CUTOFF_ID
+        ).all()
         pending_timeouts = db.query(Call).filter(
             Call.status == CallStatus.PENDING,
-            Call.created_at < timeout_threshold
+            Call.created_at < timeout_threshold,
+            Call.id > CUTOFF_ID
         ).all()
 
         vulnerable_calls = stuck_processing + failed_tasks + pending_timeouts

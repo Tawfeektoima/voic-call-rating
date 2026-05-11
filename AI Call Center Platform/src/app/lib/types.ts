@@ -44,6 +44,7 @@ export interface TranscriptSegment {
   end: number;
   emotion: EmotionState;
   hasPII?: boolean;
+  needs_review?: boolean;
 }
 
 export interface Agent {
@@ -69,7 +70,7 @@ export interface Campaign {
   color: string;
   evaluation_prompt: string;
   created_at: string;
-  
+
   // Computed stats
   total_calls: number;
   agent_count: number;
@@ -105,26 +106,36 @@ export interface SalesScoreBreakdown {
   closing: number;
 }
 
-export interface SalesViolation {
-  flagged: boolean;
-  evidence: string;
+export type ViolationSeverity = "high" | "medium" | "low";
+export type PenaltyTier =
+  | "Warning" | "1 HR" | "2 HR" | "3 HR"
+  | "Half Day" | "Full Day" | "No Show" | "Termination";
+
+export interface CallViolation {
+  id: number;
+  call_id: number;
+  violation_id: string;
+  severity: ViolationSeverity;
+  occurrence: number;
+  penalty_tier: PenaltyTier;
+  score_deduction: number;
+  hr_flagged: boolean;
+  auto_fail: boolean;
+  evidence: string | null;
+  timestamp_in_call: string | null;
+  created_at: string;
 }
 
-export interface SalesViolations {
-  policy_misrepresentation: SalesViolation;
-  abusive_language: SalesViolation;
-  forced_sale: SalesViolation;
-  talking_to_another_person: SalesViolation;
-  arabic_language: SalesViolation;
-  eating_drinking: SalesViolation;
-  background_noise: SalesViolation;
-  dead_air: SalesViolation;
-  hung_up_no_reason: SalesViolation;
-  no_callback_after_drop: SalesViolation;
-  hold_no_permission: SalesViolation;
-  hold_too_long: SalesViolation;
-  no_mute_cough: SalesViolation;
-  transferred_dead_air: SalesViolation;
+export interface ViolationSummaryRow {
+  employee_id: number;
+  employee_name: string;
+  total_violations: number;
+  high_count: number;
+  medium_count: number;
+  low_count: number;
+  hr_flagged_count: number;
+  total_deductions: number;
+  last_violation_at: string | null;
 }
 
 export interface SalesPenalty {
@@ -154,9 +165,22 @@ export interface SalesEvalData {
   offers_skipped_incorrectly: string[];
   offer_details: OfferDetail[];
   closing: Record<string, any>;
-  violations?: SalesViolations;
   penalties: SalesPenalty[];
   score_breakdown?: SalesScoreBreakdown;
+}
+
+export interface DeductionItem {
+  category: string;
+  deduction: number;
+  score: number;
+  max: number;
+}
+
+export interface ViolationItemOut {
+  violation_id: string;
+  severity: "low" | "medium" | "high" | "critical";
+  timestamp?: string;
+  evidence?: string;
 }
 
 export interface Call {
@@ -169,10 +193,10 @@ export interface Call {
   reasoning: string | null;
   evaluation_score: number | null;
   audio_duration: number | null;
-  strengths: any[] | null;
-  weaknesses: WeaknessItem[] | Record<string, any>[] | null;
+  strengths: (string | StrengthItem)[] | null;
+  weaknesses: WeaknessItem[] | null;
   error_message: string | null;
-  
+
   // Review fields
   overridden_score: number | null;
   reviewer_notes: string | null;
@@ -180,15 +204,19 @@ export interface Call {
 
   created_at: string; // ISO format string
   processed_at: string | null; // ISO format string
-  
+
   emotion_timeline: EmotionPoint[] | null;
   lead_status: string | null;
   is_golden_moment: boolean;
+  needs_review?: boolean;
   agent_talk_time: number | null;
   customer_talk_time: number | null;
   call_summary: string | null;
+  ai_summary?: string | null;
+  deductions?: DeductionItem[] | null;
   outcome?: CallOutcome | null;
   sales_eval_data?: SalesEvalData | null;
+  violations?: ViolationItemOut[];
 }
 
 export interface EmployeeRanking {

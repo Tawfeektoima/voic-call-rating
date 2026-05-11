@@ -165,6 +165,10 @@ class EvaluationResult(BaseModel):
     # --- Sales Support (Task 4) ---
     raw_sales_data: Optional[dict] = Field(default=None, description="Full raw data from sales evaluations")
 
+    # --- Violations (Task V03) ---
+    raw_violations: list = Field(default_factory=list, description="List of violation dicts from LLM, to be processed by apply_violations()")
+
+
     @field_validator("strengths", mode="before")
     @classmethod
     def validate_strengths(cls, v):
@@ -193,6 +197,7 @@ class TranscriptSegmentSchema(BaseModel):
     speaker: str
     text: str
     emotion: Optional[str] = "calm"
+    needs_review: bool = False
 
 class CallOutcomeOut(BaseModel):
     """Serialization schema for CallOutcome records."""
@@ -218,14 +223,14 @@ class CallOut(BaseModel):
     id: int
     employee_id: int
     campaign_id: int
-    original_filename: Optional[str]
+    original_filename: Optional[str] = None
     status: str
     transcript: Optional[List[TranscriptSegmentSchema]] = None
     reasoning: Optional[str] = None
     evaluation_score: Optional[float] = None
     audio_duration: Optional[float] = None
-    strengths: Optional[List[str]] = None
-    weaknesses: Optional[List[dict]] = None
+    strengths: Optional[List[StrengthItem]] = None
+    weaknesses: Optional[List[WeaknessItem]] = None
     error_message: Optional[str] = None
     
     # Review fields
@@ -238,9 +243,19 @@ class CallOut(BaseModel):
     def validate_json_fields(cls, v):
         if isinstance(v, str):
             try:
-                return json.loads(v)
+                v = json.loads(v)
             except (json.JSONDecodeError, TypeError):
-                return []
+                v = []
+        
+        if isinstance(v, list):
+            new_v = []
+            for item in v:
+                if isinstance(item, str):
+                    # Convert legacy string to structured object
+                    new_v.append({"issue": item, "detail": ""})
+                else:
+                    new_v.append(item)
+            return new_v
         return v
 
     created_at: datetime
@@ -252,6 +267,7 @@ class CallOut(BaseModel):
     tags: Optional[List[str]] = None
     lead_status: Optional[str] = None
     is_golden_moment: bool = False
+    needs_review: bool = False
     call_summary: Optional[str] = None
     emotion_timeline: Optional[List[dict]] = None
 
@@ -411,7 +427,7 @@ class SalesEvaluationResult(BaseModel):
     score: float
     summary: str
     reasoning: str = ""
-    strengths: List[str] = []
+    strengths: List[StrengthItem] = []
     areas_for_improvement: List[str] = []
     opening: dict = {}
     qualifying_questions: dict = {}
@@ -419,7 +435,7 @@ class SalesEvaluationResult(BaseModel):
     offers_skipped_incorrectly: List[str] = []
     offer_details: List[OfferDetail] = []
     closing: dict = {}
-    violations: Optional[SalesViolations] = None
+    violations: list = []
     penalties: List[SalesPenalty] = []
     score_breakdown: Optional[SalesScoreBreakdown] = None
 
@@ -435,3 +451,85 @@ class SessionStartResponse(BaseModel):
     session_id: str
     wss_url: str
     reconnect_token: str
+
+# ===========================
+#  HR Violations Schemas
+# ===========================
+
+class AgentViolationOut(BaseModel):
+    id: int
+    call_id: int
+    violation_id: str
+    severity: str
+    occurrence: int
+    penalty_tier: str
+    score_deduction: float
+    hr_flagged: bool
+    auto_fail: bool
+    evidence: Optional[str]
+    timestamp_in_call: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class AgentViolationHistory(BaseModel):
+    employee_id: int
+    employee_name: str
+    total_violations: int
+    total_deductions: float
+    violations: List[AgentViolationOut]
+
+class ViolationSummaryRow(BaseModel):
+    employee_id: int
+    employee_name: str
+    total_violations: int
+    high_count: int
+    medium_count: int
+    low_count: int
+    hr_flagged_count: int
+    total_deductions: float
+    last_violation_at: Optional[datetime]
+
+class PendingViolationOut(BaseModel):
+    violation_id: int
+    employee_id: int
+    employee_name: str
+    call_id: int
+    violation_type: str
+    severity: str
+    occurrence: int
+    penalty_tier: str
+    evidence: Optional[str]
+    created_at: datetime
+
+class ViolationStats(BaseModel):
+    total_violations_today: int
+    total_violations_this_week: int
+    most_common_violation: Optional[str]
+    most_common_violation_count: int
+    agents_with_hr_flags: int
+    auto_fails_today: int
+
+
+# --- Call Detail UI Support (Task-UI04) ---
+
+class DeductionItem(BaseModel):
+    category: str
+    deduction: float
+    score: float
+    max: float
+
+class ViolationItemOut(BaseModel):
+    violation_id: str
+    severity: str
+    timestamp: Optional[str] = None
+    evidence: Optional[str] = None
+
+class CallDetailResponse(CallOut):
+    model_config = ConfigDict(from_attributes=True)
+    
+    ai_summary: Optional[str] = None
+    strengths: List[StrengthItem] = []
+    deductions: List[DeductionItem] = []
+    violations: List[ViolationItemOut] = []

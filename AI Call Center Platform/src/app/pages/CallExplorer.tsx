@@ -23,7 +23,7 @@ export function CallExplorer() {
   const [selectedAgent, setSelectedAgent] = useState<string>('');
   const [selectedCampaign, setSelectedCampaign] = useState<string>('');
 
-  const { data: calls, isLoading: callsLoading } = useCalls({ limit: 50 } as any);
+  const { data: calls, isLoading: callsLoading } = useCalls({ limit: 100, min_id: 66 } as any);
   const { data: campaigns } = useCampaigns();
   const { data: agents } = useQuery({ queryKey: ['agents'], queryFn: getEmployees });
   const uploadMutation = useUploadAudio();

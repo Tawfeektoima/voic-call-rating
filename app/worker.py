@@ -30,6 +30,40 @@ def force_cuda_cleanup():
         torch.cuda.ipc_collect()
     print("[*] CUDA memory cache cleared.")
 
+def filter_hallucinated_segments(segments: list[dict]) -> list[dict]:
+    """
+    Filter segments based on Whisper confidence scores (Task-BE05).
+    """
+    cleaned = []
+    for seg in segments:
+        avg_logprob = seg.get("avg_logprob", 0)
+        no_speech_prob = seg.get("no_speech_prob", 0)
+
+        # 1. Hard Removal: no speech detected
+        if no_speech_prob > 0.6:
+            continue
+
+        # 2. Flagging: low confidence
+        if avg_logprob < -1.0:
+            seg["needs_review"] = True
+        else:
+            seg["needs_review"] = False
+
+        cleaned.append(seg)
+    return cleaned
+
+def format_transcript_for_llm(segments):
+    """
+    Prepares transcript for LLM with low-confidence markers (Task-BE05).
+    """
+    lines = []
+    for seg in segments:
+        prefix = "[NEEDS_REVIEW] " if seg.get("needs_review") else ""
+        lines.append(
+            f"{prefix}{seg['speaker']} ({seg['start']:.0f}s): {seg['text']}"
+        )
+    return "\n".join(lines)
+
 # Initialize Celery
 celery_app = Celery("call_rating_worker", broker=settings.CELERY_BROKER_URL)
 
@@ -84,6 +118,11 @@ def process_call_audio_task(self, call_id: int):
     """
     print_worker_vram(f"PRE-TASK - Call ID {call_id}")
     
+    # Hard Cutoff for Legacy Calls (TASK-V07 Protection)
+    if call_id <= 65:
+        print(f"[*] Skipping legacy Call ID {call_id} (ID <= 65)")
+        return
+    
     # 0. Redis Health Check (Task 62-G)
     is_healthy, redis_error = check_redis_health()
     if not is_healthy:
@@ -137,6 +176,7 @@ def process_call_audio_task(self, call_id: int):
         try:
             current_stage = "TRANSCRIPTION"
             raw_segments, duration = transcriber.process_audio(call.audio_file_path)
+            raw_segments = filter_hallucinated_segments(raw_segments)
             call.audio_duration = duration
             force_cuda_cleanup() # After Transcription (Task 62-E)
             
@@ -182,7 +222,8 @@ def process_call_audio_task(self, call_id: int):
                     "end": float(seg.get("end", 0.0)),
                     "speaker": role,
                     "text": str(seg.get("text", "")).strip(),
-                    "emotion": emotion
+                    "emotion": emotion,
+                    "needs_review": seg.get("needs_review", False)
                 }
                 structured_segments.append(segment_obj)
                 
@@ -194,6 +235,7 @@ def process_call_audio_task(self, call_id: int):
                     customer_time += seg_dur
             
             call.transcript = structured_segments
+            call.needs_review = any(s.get("needs_review") for s in structured_segments)
             call.agent_talk_time = round(agent_time, 2)
             call.customer_talk_time = round(customer_time, 2)
             
@@ -207,16 +249,22 @@ def process_call_audio_task(self, call_id: int):
                 call.call_hour = call.call_datetime.hour
                 call.call_day_of_week = call.call_datetime.strftime('%A')
             
-            # Tenure
+            # Tenure (Task-C03: Handle naive/aware mixing)
             if employee and employee.created_at:
-                # Convert the current aware UTC datetime to a naive datetime for safe DB subtraction
-                now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
-                delta_tenure = (now_utc_naive - employee.created_at)
+                now_utc = datetime.now(timezone.utc)
+                created = employee.created_at
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                delta_tenure = now_utc - created
                 employee.agent_tenure_days = delta_tenure.days
             
-            # Calls Before This (Today)
+            # Calls Before This (Today) (Task-C03: Handle naive/aware mixing)
             if call.call_datetime:
                 start_of_day = datetime.combine(call.call_datetime.date(), datetime.min.time())
+                # Ensure start_of_day matches the timezone-awareness of call_datetime
+                if call.call_datetime.tzinfo is not None:
+                    start_of_day = start_of_day.replace(tzinfo=timezone.utc)
+                
                 calls_today_count = db.query(Call).filter(
                     Call.employee_id == call.employee_id,
                     Call.created_at >= start_of_day,
@@ -321,11 +369,7 @@ def process_call_audio_task(self, call_id: int):
 
             filtered_transcript = [s for s in call.transcript if not is_system_announcement(s)]
 
-            # Convert structured transcript back to string for LLM evaluation
-            llm_transcript = "\n".join([
-                f"[{s['start']:05.2f} - {s['end']:05.2f}] {s['speaker']}: {s['text']}"
-                for s in filtered_transcript
-            ])
+            llm_transcript = format_transcript_for_llm(filtered_transcript)
 
             TRANSFER_PHRASES = [
                 "put you through",
@@ -380,16 +424,23 @@ def process_call_audio_task(self, call_id: int):
                 call.sales_eval_data = eval_result.raw_sales_data
 
                 # Auto-flag HR violations
-                violations = eval_result.raw_sales_data.get("violations", {})
+                violations = eval_result.raw_sales_data.get("violations", [])
                 if violations:
-                    flagged_violations = [
-                        k for k, v in violations.items() 
-                        if isinstance(v, dict) and v.get("flagged")
-                    ]
+                    flagged_violations = []
+                    if isinstance(violations, dict):
+                        flagged_violations = [
+                            k for k, v in violations.items()
+                            if isinstance(v, dict) and v.get("flagged")
+                        ]
+                    elif isinstance(violations, list):
+                        flagged_violations = [
+                            v.get("violation_id", str(v))
+                            for v in violations
+                            if isinstance(v, dict)
+                        ]
                     if flagged_violations:
                         print(f"⚠️ HR ALERT — Call {call_id} | Agent {call.employee_id} "
                               f"| Violations: {flagged_violations}")
-                        # TODO: write to HR violations table (Task 6 extension)
 
                 # Auto-set lead status from offer funnel
                 offers = eval_result.raw_sales_data.get("offers_presented", [])
@@ -400,7 +451,7 @@ def process_call_audio_task(self, call_id: int):
                 )
 
             call.status = CallStatus.EVALUATED
-            call.processed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            call.processed_at = datetime.now(timezone.utc)
 
             # --- Save RAG QA Pairs (Task 65) ---
             if eval_result.qa_pairs:
@@ -596,7 +647,7 @@ def evaluate_live_call_task(call_id: int):
                         print(f"[HITL] Nominated Golden Pair candidate from Live Call {call_id}")
 
         call.status = CallStatus.EVALUATED
-        call.processed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        call.processed_at = datetime.now(timezone.utc)
         db.commit()
         redis_client.publish("call_updates", json.dumps({"call_id": call_id, "status": CallStatus.EVALUATED.value}))
         

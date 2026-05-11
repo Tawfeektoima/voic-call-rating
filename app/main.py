@@ -101,7 +101,21 @@ async def configure_redis_limits():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    recover_stuck_tasks()
+    # Startup checks (TASK-C05)
+    settings = get_settings()
+    if settings.DATABASE_URL.startswith("sqlite"):
+        print("=" * 60)
+        print("⚠️  WARNING: Running with SQLite database.")
+        print("   SQLite is for local development only.")
+        print("   Do NOT use this in production or multi-worker setups.")
+        print("=" * 60)
+        
+    # Startup recovery (TASK-V07 follow-up)
+    if settings.ENABLE_STARTUP_RECOVERY:
+        print("⚠️  Startup recovery enabled — processing stuck tasks...")
+        recover_stuck_tasks()
+    else:
+        print("ℹ️  Startup recovery DISABLED — skipping stuck task recovery.")
     await configure_redis_limits() # Phase 8: Redis optimization
     listener_task = asyncio.create_task(redis_listener())
     

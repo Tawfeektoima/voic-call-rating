@@ -8,6 +8,7 @@ export const useCalls = (params: {
   date_from?: string;
   date_to?: string;
   limit?: number;
+  min_id?: number;
 } = {}) => {
   return useQuery<Call[]>({
     queryKey: ['calls', params],

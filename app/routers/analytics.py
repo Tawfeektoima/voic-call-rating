@@ -73,6 +73,7 @@ def search_calls(
     campaign_id: Optional[int] = Query(None, description="Filter by Campaign ID"),
     date_from: Optional[datetime] = Query(None, description="Calls processed after this date"),
     date_to: Optional[datetime] = Query(None, description="Calls processed before this date"),
+    min_id: Optional[int] = Query(None, description="Filter by minimum call ID (hides legacy calls)"),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
@@ -84,6 +85,9 @@ def search_calls(
     # Role Check: Agents can only search their own calls
     if current_user.role == UserRole.AGENT:
         query = query.filter(Call.employee_id == current_user.id)
+
+    if min_id:
+        query = query.filter(Call.id >= min_id)
 
     if employee_code:
         query = query.join(Employee).filter(Employee.employee_code == employee_code)

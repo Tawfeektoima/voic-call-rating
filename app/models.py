@@ -97,6 +97,7 @@ class Employee(Base):
     calls = relationship("Call", back_populates="employee", lazy="dynamic")
     mastery_stats = relationship("AgentMasteryStats", back_populates="employee", uselist=False, cascade="all, delete-orphan")
     coaching_sessions = relationship("CoachingSession", back_populates="employee", cascade="all, delete-orphan")
+    violations = relationship("AgentViolation", back_populates="employee", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Employee id={self.id} name={self.name!r}>"
@@ -117,6 +118,7 @@ class Campaign(Base):
 
     # Relationships
     calls = relationship("Call", back_populates="campaign", lazy="dynamic")
+    violations = relationship("AgentViolation", back_populates="campaign", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Campaign id={self.id} name={self.name!r}>"
@@ -174,6 +176,7 @@ class Call(Base):
     dob_verified        = Column(Boolean, default=False)
     de_escalation_success = Column(Boolean, default=False)
     sales_eval_data     = Column(JSON, nullable=True)
+    needs_review        = Column(Boolean, default=False)
 
     # Timestamps
     created_at       = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -185,6 +188,7 @@ class Call(Base):
     outcome  = relationship("CallOutcome", back_populates="call", uselist=False, cascade="all, delete-orphan")
     qa_pairs = relationship("CallQAPair", back_populates="call", cascade="all, delete-orphan")
     annotations = relationship("CallAnnotation", back_populates="call", cascade="all, delete-orphan")
+    violations = relationship("AgentViolation", back_populates="call", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Call id={self.id} status={self.status.value}>"
@@ -373,3 +377,33 @@ class GoldenPairCandidate(Base):
     score       = Column(Float, nullable=False) # The evaluation score of the call
     status      = Column(SAEnum(CandidateStatus), default=CandidateStatus.PENDING, nullable=False, index=True)
     created_at  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class AgentViolation(Base):
+    __tablename__ = "agent_violations"
+
+    id                = Column(Integer, primary_key=True, index=True)
+    employee_id       = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    call_id           = Column(Integer, ForeignKey("calls.id"), nullable=False, index=True)
+    campaign_id       = Column(Integer, ForeignKey("campaigns.id"), nullable=False)
+    violation_id      = Column(String(50), nullable=False, index=True)
+    # e.g. "abusive_language", "dead_air", "skipped_offer"
+    severity          = Column(String(10), nullable=False)
+    # "high" | "medium" | "low"
+    occurrence        = Column(Integer, nullable=False)
+    # 1 = first time, 2 = second, 3 = third+
+    penalty_tier      = Column(String(20), nullable=False)
+    # "Warning" | "1 HR" | "2 HR" | "3 HR" | "Half Day" | "Full Day" | "Termination"
+    score_deduction   = Column(Float, default=0.0, nullable=False)
+    hr_flagged        = Column(Boolean, default=False, nullable=False)
+    auto_fail         = Column(Boolean, default=False, nullable=False)
+    evidence          = Column(Text, nullable=True)
+    timestamp_in_call = Column(String(10), nullable=True)
+    # "MM:SS" format, e.g. "03:45"
+    created_at        = Column(DateTime(timezone=True),
+                               default=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    employee  = relationship("Employee", back_populates="violations")
+    call      = relationship("Call", back_populates="violations")
+    campaign  = relationship("Campaign", back_populates="violations")

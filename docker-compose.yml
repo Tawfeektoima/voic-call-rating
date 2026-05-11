@@ -6,9 +6,11 @@ services:
     container_name: call_rating_db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: call_admin
-      POSTGRES_PASSWORD: call_rating_secret_2026
-      POSTGRES_DB: call_rating
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    env_file:
+      - .env.docker
     ports:
       - "5432:5432"
     volumes:
