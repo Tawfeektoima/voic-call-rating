@@ -32,24 +32,36 @@ def force_cuda_cleanup():
 
 def filter_hallucinated_segments(segments: list[dict]) -> list[dict]:
     """
-    Filter segments based on Whisper confidence scores (Task-BE05).
+    Fixed for WhisperX output — avg_logprob and no_speech_prob
+    are NOT available after alignment+diarization.
+    Uses word-level confidence instead when available.
     """
     cleaned = []
+
     for seg in segments:
-        avg_logprob = seg.get("avg_logprob", 0)
-        no_speech_prob = seg.get("no_speech_prob", 0)
+        # Method 1: word-level confidence (available in WhisperX with word_timestamps=True)
+        words = seg.get("words", [])
+        if words:
+            scores = [w.get("score", 1.0) for w in words if "score" in w]
+            if scores:
+                avg_score = sum(scores) / len(scores)
+                if avg_score < 0.3:   # very low confidence across all words
+                    seg["needs_review"] = True
+                elif avg_score < 0.55:
+                    seg["needs_review"] = True
 
-        # 1. Hard Removal: no speech detected
-        if no_speech_prob > 0.6:
-            continue
+        # Method 2: fallback to avg_logprob if still present (raw Whisper output)
+        avg_logprob = seg.get("avg_logprob")
+        no_speech_prob = seg.get("no_speech_prob")
 
-        # 2. Flagging: low confidence
-        if avg_logprob < -1.0:
+        if no_speech_prob is not None and no_speech_prob > 0.6:
+            continue  # Hard remove
+
+        if avg_logprob is not None and avg_logprob < -1.0:
             seg["needs_review"] = True
-        else:
-            seg["needs_review"] = False
 
         cleaned.append(seg)
+
     return cleaned
 
 def format_transcript_for_llm(segments):
@@ -410,7 +422,27 @@ def process_call_audio_task(self, call_id: int):
             
             call.reasoning = eval_result.reasoning
             call.call_summary = eval_result.summary
-            call.evaluation_score = eval_result.score
+            # ✅ Guard: if score = 0 and sales breakdown has real scores, use breakdown
+            raw_score = eval_result.score
+
+            if raw_score == 0 and eval_result.raw_sales_data:
+                breakdown = eval_result.raw_sales_data.get("score_breakdown") or {}
+                max_pts = {
+                    "opening": 10,
+                    "script_compliance": 30,
+                    "customer_handling": 20,
+                    "conduct": 25,
+                    "closing": 15,
+                }
+                fallback_score = sum(
+                    float(breakdown.get(field, 0) or 0)
+                    for field in max_pts
+                )
+                if fallback_score > 0:
+                    raw_score = fallback_score
+                    print(f"[Score Fix] Call {call_id}: Using breakdown score {fallback_score} instead of 0")
+
+            call.evaluation_score = raw_score
             call.strengths = [s.model_dump() if hasattr(s, "model_dump") else s for s in eval_result.strengths]
             call.weaknesses = [w.model_dump() for w in eval_result.weaknesses]
             
@@ -609,7 +641,27 @@ def evaluate_live_call_task(call_id: int):
         # 5. Save results
         call.reasoning = eval_result.reasoning
         call.call_summary = eval_result.summary
-        call.evaluation_score = eval_result.score
+        # ✅ Guard: if score = 0 and sales breakdown has real scores, use breakdown
+        raw_score = eval_result.score
+
+        if raw_score == 0 and eval_result.raw_sales_data:
+            breakdown = eval_result.raw_sales_data.get("score_breakdown") or {}
+            max_pts = {
+                "opening": 10,
+                "script_compliance": 30,
+                "customer_handling": 20,
+                "conduct": 25,
+                "closing": 15,
+            }
+            fallback_score = sum(
+                float(breakdown.get(field, 0) or 0)
+                for field in max_pts
+            )
+            if fallback_score > 0:
+                raw_score = fallback_score
+                print(f"[Score Fix] Live Call {call_id}: Using breakdown score {fallback_score} instead of 0")
+
+        call.evaluation_score = raw_score
         call.strengths = [s.model_dump() if hasattr(s, "model_dump") else s for s in eval_result.strengths]
         call.weaknesses = [w.model_dump() for w in eval_result.weaknesses]
         call.opening_ok = eval_result.opening_ok

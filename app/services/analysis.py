@@ -3,7 +3,7 @@ import time
 import re
 from groq import Groq
 from app.config import get_settings
-from app.schemas import EvaluationResult, SalesEvaluationResult
+from app.schemas import EvaluationResult, SalesEvaluationResult, WeaknessItem
 from app.violations import build_violation_prompt
 
 settings = get_settings()
@@ -413,24 +413,35 @@ def evaluate_transcript(transcript: str, campaign_prompt: str, campaign_type: st
                 # Build weaknesses list from score_breakdown for DB compatibility
                 breakdown = sales_result.score_breakdown
                 weaknesses = []
+                calculated_score = 0.0
+
                 if breakdown:
+                    max_pts = {
+                        "opening": 10,
+                        "script_compliance": 30,
+                        "customer_handling": 20,
+                        "conduct": 25,
+                        "closing": 15,
+                    }
                     for field, val in breakdown.model_dump().items():
-                        max_pts = {
-                            "opening": 10,
-                            "script_compliance": 30,
-                            "customer_handling": 20,
-                            "conduct": 25,
-                            "closing": 15
-                        }
-                        deducted = max_pts.get(field, 0) - val
+                        earned = float(val or 0.0)
+                        max_val = max_pts.get(field, 0)
+                        calculated_score += earned
+                        deducted = max_val - earned
                         if deducted > 0:
-                            weaknesses.append({
-                                "issue": field.replace("_", " ").title(),
-                                "detail": f"Score: {val}/{max_pts.get(field,0)}",
-                                "deduction": deducted,
-                                "score": val,
-                                "max_score": max_pts.get(field, 0)
-                            })
+                            weaknesses.append(
+                                WeaknessItem(
+                                    issue=field.replace("_", " ").title(),
+                                    detail=f"Score {earned}/{max_val}",
+                                    deduction=deducted,
+                                )
+                            )
+
+                # ✅ Use calculated_score if LLM returned 0 or None
+                final_score = calculated_score if not sales_result.score else sales_result.score
+                # ✅ Extra guard: if LLM score diverges >15 pts from breakdown, trust breakdown
+                if abs(final_score - calculated_score) > 15:
+                    final_score = calculated_score
 
                 # Robust extraction for opening/closing regardless if dict or object
                 opening_data = sales_result.opening
@@ -448,10 +459,10 @@ def evaluate_transcript(transcript: str, campaign_prompt: str, campaign_type: st
                     closing_ok = getattr(closing_data, 'professional_farewell', False)
 
                 return EvaluationResult(
-                    score=sales_result.score,
+                    score=final_score,
                     summary=sales_result.summary,
                     reasoning=sales_result.reasoning,
-                    strengths=[{"issue": s, "detail": ""} for s in sales_result.strengths],
+                    strengths=[{"issue": s.issue if hasattr(s, 'issue') else str(s), "detail": getattr(s, 'detail', '')} for s in sales_result.strengths],
                     weaknesses=weaknesses,
                     opening_ok=opening_ok,
                     closing_ok=closing_ok,

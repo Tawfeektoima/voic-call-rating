@@ -105,10 +105,10 @@ class CallTranscriber:
             
             # Repetition fix and VAD settings as requested
             result = model.transcribe(
-                audio, 
+                audio,
                 batch_size=actual_batch_size,
-                chunk_size=30,
-                print_progress=True
+                language="en",
+                print_progress=True,
             )
             result["segments"] = self.filter_hallucinations(result.get("segments", []))
             
@@ -123,7 +123,14 @@ class CallTranscriber:
             # 3. Align
             print(f"[*] Loading Alignment Model...")
             model_a, metadata = whisperx.load_align_model(language_code=result["language"], device=self.device)
-            result = whisperx.align(result["segments"], model_a, metadata, audio, self.device)
+            result = whisperx.align(
+                result["segments"],
+                model_a,
+                metadata,
+                audio,
+                self.device,
+                return_char_alignments=False,  # أسرع
+            )
             
             # Unload alignment model immediately
             del model_a
@@ -157,38 +164,67 @@ class CallTranscriber:
 
     def filter_hallucinations(self, segments: list) -> list:
         """
-        Removes repeated consecutive segments produced by WhisperX hallucination
-        during silence or hold music. Allows max 1 consecutive repetition.
-        Also removes segments shorter than 0.3 seconds (noise artifacts).
+        Enhanced hallucination filter for whisper-small:
+        1. Remove repeated consecutive segments (existing)
+        2. Remove very short segments < 0.3s (existing)
+        3. Remove known hallucination phrases specific to silence/hold music
+        4. Flag segments with suspiciously low word count vs duration
         """
         if not segments:
             return segments
+
+        # Known whisper-small hallucination phrases during silence
+        HALLUCINATION_PHRASES = {
+            "thank you for watching",
+            "thank you for listening",
+            "please subscribe",
+            "thanks for watching",
+            "www.",
+            "subtitles by",
+            "transcribed by",
+            "i'm going to",          # very common false positive in silence
+            "uh huh uh huh uh huh",
+        }
 
         filtered = []
         repeat_count = 0
         last_text = ""
 
         for seg in segments:
-            current_text = seg.get("text", "").strip().lower()
+            current_text = seg.get("text", "").strip()
             seg_duration = seg.get("end", 0) - seg.get("start", 0)
+            text_lower = current_text.lower()
 
+            # 1. Skip very short noise artifacts
             if seg_duration < 0.3:
                 continue
 
-            if current_text == last_text:
+            # 2. Skip known hallucination phrases
+            if any(phrase in text_lower for phrase in HALLUCINATION_PHRASES):
+                print(f"[Hallucination Filter] Removed known phrase: '{current_text}'")
+                continue
+
+            # 3. Skip repeated consecutive segments (max 1 repetition allowed)
+            if current_text.lower() == last_text:
                 repeat_count += 1
                 if repeat_count >= 2:
                     continue
             else:
                 repeat_count = 0
+                last_text = current_text.lower()
 
-            last_text = current_text
+            # 4. Flag suspiciously sparse segments
+            # (very long duration but very few words = likely silence hallucination)
+            word_count = len(current_text.split())
+            if seg_duration > 5.0 and word_count < 3:
+                seg["needs_review"] = True
+                seg["hallucination_suspect"] = True
+
             filtered.append(seg)
 
         removed = len(segments) - len(filtered)
         if removed > 0:
-            print(f"🧹 Hallucination filter: removed {removed} repeated/short segments.")
-
+            print(f"[Hallucination Filter] Removed {removed} repeated/short/known-phrase segments.")
         return filtered
 
     def _build_structured_transcript(self, segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
