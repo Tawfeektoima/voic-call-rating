@@ -1,4 +1,4 @@
-.env
+﻿.env
 .env.docker
 *.env
 __pycache__/
@@ -13,7 +13,7 @@ build/
 *.log
 # Private keys
 *.pem
-chrome_extension.pem
+
 
 # Audio and media files
 uploads/

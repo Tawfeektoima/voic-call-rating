@@ -142,7 +142,7 @@ app = FastAPI(
 # Instrument the app for Prometheus (Phase 8)
 Instrumentator().instrument(app).expose(app)
 
-# CORS configuration — allow React frontend + Chrome Extension origins
+# CORS configuration — allow React frontend origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -150,7 +150,6 @@ app.add_middleware(
         "http://localhost:8000",
         "http://localhost:3000",
     ],
-    allow_origin_regex=r"^chrome-extension://.*$",  # Allow ALL Chrome Extensions
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

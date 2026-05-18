@@ -1,7 +1,7 @@
 """
 VoiceQA Extension Simulator
 ============================
-Simulates the Chrome Extension's audio streaming behaviour using pure Python.
+Simulates a WebSocket client's audio streaming behaviour using pure Python.
 Connects via WebSocket, streams 16kHz 16-bit Mono PCM in 500ms chunks,
 captures RAG suggestions, and uploads a dummy agent microphone file.
 
@@ -34,7 +34,7 @@ except ImportError:
 BASE_URL = "http://localhost:8000"
 WS_BASE  = "ws://localhost:8000"
 
-# PCM format matching the Chrome Extension exactly
+# PCM format matching the expected client protocol
 SAMPLE_RATE    = 16000           # 16kHz
 BYTES_PER_SAMPLE = 2             # 16-bit = 2 bytes
 CHANNELS       = 1               # Mono
@@ -61,14 +61,14 @@ log = logging.getLogger("Simulator")
 def generate_sine_pcm(frequency: float = 440.0, duration_sec: float = STREAM_DURATION_SEC) -> bytes:
     """
     Generates a synthetic sine wave encoded as 16-bit signed PCM (Little-Endian).
-    This matches the exact binary format the Chrome Extension sends.
+    This matches the exact binary format a WebSocket client sends.
     """
     num_samples = int(SAMPLE_RATE * duration_sec)
     t = np.linspace(0, duration_sec, num_samples, endpoint=False)
     # Generate sine wave in float [-1.0, 1.0]
     wave = np.sin(2 * np.pi * frequency * t)
     # Convert to 16-bit signed PCM [-32768, 32767]
-    # Matches offscreen.js: s < 0 ? s * 0x8000 : s * 0x7FFF
+    # PCM encoding: s < 0 ? s * 0x8000 : s * 0x7FFF
     pcm_int16 = np.where(
         wave < 0,
         (wave * 0x8000).astype(np.int16),
@@ -145,7 +145,7 @@ async def stream_audio(session_id: str, token: str):
 
 async def upload_agent_audio(session_id: str):
     """
-    Simulates the Chrome Extension's post-session microphone upload.
+    Simulates a client's post-session microphone upload.
     Sends a small dummy WebM file to the backend.
     """
     # Create a minimal dummy WebM-like payload (just enough to test the endpoint)

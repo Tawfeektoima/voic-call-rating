@@ -388,14 +388,10 @@ export function CallDetail() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {call.violations && call.violations.length > 0 ? (
+                  {call.violations && call.violations.length > 0 && (
                     call.violations.map((v, i) => (
                       <ViolationItem key={i} violation={v} />
                     ))
-                  ) : (
-                    <p className="text-sm text-green-600">
-                      No compliance violations detected in this call.
-                    </p>
                   )}
                 </CardContent>
               </Card>
