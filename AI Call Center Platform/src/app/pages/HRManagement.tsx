@@ -5,11 +5,13 @@ import {
   ShieldCheck, HelpCircle, Loader2
 } from 'lucide-react';
 import { cn } from '../components/ui/utils';
+import api from '../lib/api';
 
 interface AgentPreview {
   index: number;
   name: string;
   email: string;
+  employee_code: string;
   campaign_name: string;
   phone_number: string;
   errors: string[];
@@ -45,17 +47,13 @@ export function HRManagement() {
     formData.append('file', selectedFile);
 
     try {
-      const response = await fetch('http://localhost:8000/api/hr/preview', {
-        method: 'POST',
-        body: formData,
+      const response = await api.post('/api/hr/preview', formData, {
         headers: {
-          // Auth token would go here in a real app
+          'Content-Type': 'multipart/form-data',
         }
       });
       
-      if (!response.ok) throw new Error('Failed to parse file');
-      
-      const data = await response.json();
+      const data = response.data;
       setPreview(data.data);
       setSummary(data.summary);
     } catch (err) {
@@ -66,8 +64,20 @@ export function HRManagement() {
     }
   };
 
-  const downloadTemplate = () => {
-    window.open('http://localhost:8000/api/hr/template', '_blank');
+  const downloadTemplate = async () => {
+    try {
+      const response = await api.get('/api/hr/template', { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'agent_import_template.csv');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (err) {
+      console.error(err);
+      alert('Failed to download template');
+    }
   };
 
   const finalizeImport = async () => {
@@ -77,13 +87,8 @@ export function HRManagement() {
     const validAgents = preview.filter(a => a.isValid);
 
     try {
-      const response = await fetch('http://localhost:8000/api/hr/import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(validAgents)
-      });
-
-      const data = await response.json();
+      const response = await api.post('/api/hr/import', validAgents);
+      const data = response.data;
       setResult(data);
       setPreview(null);
       setFile(null);
@@ -218,11 +223,12 @@ export function HRManagement() {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-auto">
+               <div className="flex-1 overflow-auto">
                 <table className="w-full text-left border-collapse">
                   <thead className="bg-secondary/50 sticky top-0 z-10">
                     <tr>
                       <th className="px-4 py-3 text-xs font-bold text-muted-foreground uppercase">Status</th>
+                      <th className="px-4 py-3 text-xs font-bold text-muted-foreground uppercase">Employee Code</th>
                       <th className="px-4 py-3 text-xs font-bold text-muted-foreground uppercase">Name</th>
                       <th className="px-4 py-3 text-xs font-bold text-muted-foreground uppercase">Email</th>
                       <th className="px-4 py-3 text-xs font-bold text-muted-foreground uppercase">Campaign</th>
@@ -245,6 +251,7 @@ export function HRManagement() {
                             </div>
                           )}
                         </td>
+                        <td className="px-4 py-3 text-xs text-foreground font-mono">{agent.employee_code}</td>
                         <td className="px-4 py-3 text-xs text-foreground">{agent.name}</td>
                         <td className="px-4 py-3 text-xs text-muted-foreground">{agent.email}</td>
                         <td className="px-4 py-3 text-xs text-muted-foreground">{agent.campaign_name}</td>

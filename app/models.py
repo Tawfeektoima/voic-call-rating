@@ -177,6 +177,9 @@ class Call(Base):
     de_escalation_success = Column(Boolean, default=False)
     sales_eval_data     = Column(JSON, nullable=True)
     needs_review        = Column(Boolean, default=False)
+    qa_alarm            = Column(Boolean, default=False, nullable=False)
+    qa_alarm_reason     = Column(Text, nullable=True)
+    qa_alarm_evidence   = Column(Text, nullable=True)
 
     # Timestamps
     created_at       = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -407,3 +410,21 @@ class AgentViolation(Base):
     employee  = relationship("Employee", back_populates="violations")
     call      = relationship("Call", back_populates="violations")
     campaign  = relationship("Campaign", back_populates="violations")
+
+
+class ScoreOverrideAudit(Base):
+    __tablename__ = "score_override_audits"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    call_id       = Column(Integer, ForeignKey("calls.id"), nullable=False, index=True)
+    reviewer_id   = Column(Integer, ForeignKey("employees.id"), nullable=False)
+    reviewer_name = Column(String(255), nullable=False)
+    old_score     = Column(Float, nullable=True)
+    new_score     = Column(Float, nullable=False)
+    reason        = Column(Text, nullable=True)
+    created_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    # Relationships
+    call          = relationship("Call", backref="override_audits")
+    reviewer      = relationship("Employee")
+

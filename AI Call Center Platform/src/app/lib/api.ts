@@ -92,6 +92,29 @@ export const uploadAudio = async (formData: FormData): Promise<CallUploadRespons
   return response.data;
 };
 
+export interface BulkCallItemResult {
+  filename: string;
+  success: boolean;
+  call_id?: number;
+  error?: string;
+}
+
+export interface BulkCallUploadResponse {
+  results: BulkCallItemResult[];
+  success_count: number;
+  failed_count: number;
+  message: string;
+}
+
+export const bulkUploadAudio = async (formData: FormData): Promise<BulkCallUploadResponse> => {
+  const response = await api.post<BulkCallUploadResponse>('/api/audio/bulk-upload', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  return response.data;
+};
+
 /**
  * Analytics API Functions
  */

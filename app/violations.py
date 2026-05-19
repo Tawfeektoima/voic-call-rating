@@ -8,6 +8,14 @@ from sqlalchemy.orm import Session
 VIOLATION_REGISTRY = {
 
     # ── HIGH SEVERITY ───────────────────────────────────────────────────────
+    "manipulative_leading": {
+        "description": "Agent instructed the customer to choose an option in a leading or manipulative way",
+        "severity": "high", "category": "compliance",
+        "penalties": ["Warning", "1 HR", "2 HR"],
+        "auto_fail": False,
+        "hr_flag_on": ["Warning", "1 HR", "2 HR"],
+        "llm_hint": "Flag if the agent instructs the customer to choose an option in a leading, coercive, or manipulative way (e.g. instructing them to say 'yes' or guiding their choices improperly).",
+    },
     "recording_disclosure": {
         "description": "Agent did not mention calls are recorded for quality and training",
         "severity": "high", "category": "compliance",

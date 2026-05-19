@@ -493,6 +493,21 @@ def process_call_audio_task(self, call_id: int):
                 if violations_result.get("hr_flag"):
                     call.needs_review = True
 
+                # Check for abuse detection (manipulative_leading or abusive_language)
+                abuse_violations = [
+                    v for v in eval_result.raw_violations
+                    if isinstance(v, dict) and v.get("violation_id") in ["manipulative_leading", "abusive_language"]
+                ]
+                if abuse_violations:
+                    call.qa_alarm = True
+                    call.needs_review = True
+                    evidence_list = [
+                        f"[{v.get('timestamp') or 'No timestamp'}] {v.get('evidence')}"
+                        for v in abuse_violations
+                    ]
+                    call.qa_alarm_reason = "Abusive agent behavior (manipulative/leading instructions or abusive language) detected."
+                    call.qa_alarm_evidence = "; ".join(evidence_list)
+
             # Sales Data & Violations (Task 5)
             if campaign_type_value == "sales" and eval_result.raw_sales_data:
                 call.sales_eval_data = eval_result.raw_sales_data
@@ -748,6 +763,21 @@ def evaluate_live_call_task(call_id: int):
                 call.evaluation_score = violations_result["final_score"]
             if violations_result.get("hr_flag"):
                 call.needs_review = True
+
+            # Check for abuse detection (manipulative_leading or abusive_language)
+            abuse_violations = [
+                v for v in eval_result.raw_violations
+                if isinstance(v, dict) and v.get("violation_id") in ["manipulative_leading", "abusive_language"]
+            ]
+            if abuse_violations:
+                call.qa_alarm = True
+                call.needs_review = True
+                evidence_list = [
+                    f"[{v.get('timestamp') or 'No timestamp'}] {v.get('evidence')}"
+                    for v in abuse_violations
+                ]
+                call.qa_alarm_reason = "Abusive agent behavior (manipulative/leading instructions or abusive language) detected."
+                call.qa_alarm_evidence = "; ".join(evidence_list)
 
         # Save Outcomes
         outcome = CallOutcome(

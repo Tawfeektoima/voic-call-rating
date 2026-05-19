@@ -13,9 +13,10 @@ const navItems = [
   { path: '/calls', label: 'Call Explorer', agentLabel: 'My Calls', icon: Phone, roles: ['admin', 'manager', 'qa', 'agent'] },
   { path: '/intelligence', label: 'BI Hub', icon: BarChart3, roles: ['admin', 'manager'] },
   { path: '/success-library', label: 'Success Library', icon: Star, roles: ['admin', 'manager', 'qa', 'agent'] },
-  { path: '/agents/a1', label: 'Agent Profiles', agentLabel: 'My Profile', icon: Users, roles: ['admin', 'manager', 'qa', 'agent'] },
+  { path: '/agents/me', label: 'Agent Profiles', agentLabel: 'My Profile', icon: Users, roles: ['admin', 'manager', 'qa', 'agent'] },
   { path: '/data-center', label: 'Data Center', icon: Database, roles: ['admin', 'manager'] },
-  { path: '/hr', label: 'HR Dashboard', icon: ShieldAlert, roles: ['admin', 'hr_manager'] },
+  { path: '/hr', label: 'HR Dashboard', icon: ShieldAlert, roles: ['admin', 'hr_manager', 'qa'] },
+  { path: '/hr/agents', label: 'Agent Directory', icon: UserCircle, roles: ['admin', 'hr_manager'] },
   { path: '/system-health', label: 'System Health', icon: Activity, roles: ['admin'] },
 ];
 

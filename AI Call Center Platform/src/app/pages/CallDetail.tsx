@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router';
 import {
   Play, Pause, SkipBack, SkipForward, Volume2, Download,
   Star, Tag, ChevronLeft, User, Mic, Clock, Target,
-  Flame, Thermometer, Snowflake, Loader2
+  Flame, Thermometer, Snowflake, Loader2, ShieldAlert
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { getCallDetails, getEmployees, getCampaigns } from '../lib/api';
@@ -37,6 +37,11 @@ export function CallDetail() {
   const navigate = useNavigate();
   const { userRole } = useApp();
   const isAdminOrManager = userRole === 'admin' || userRole === 'manager';
+  const isQAOrAdmin = userRole === 'admin' || userRole === 'qa';
+
+  const [isEditingScore, setIsEditingScore] = useState(false);
+  const [editScoreValue, setEditScoreValue] = useState("");
+  const isSubmittingRef = useRef(false);
 
   const { data: call, isLoading: callLoading, refetch } = useQuery<Call>({
     queryKey: ['call', id],
@@ -56,6 +61,59 @@ export function CallDetail() {
 
   const agent = agents?.find(a => a.id === call?.employee_id);
   const campaign = campaigns?.find(c => c.id === call?.campaign_id);
+
+  const handleScoreSubmit = async (newScoreStr: string) => {
+    if (isSubmittingRef.current) return;
+    const newScore = parseFloat(newScoreStr);
+    if (isNaN(newScore) || newScore < 0 || newScore > 100) {
+      alert("Please enter a valid score between 0 and 100.");
+      setIsEditingScore(false);
+      return;
+    }
+    const currentScore = call?.overridden_score ?? call?.evaluation_score ?? 0;
+    if (newScore === currentScore) {
+      setIsEditingScore(false);
+      return;
+    }
+    
+    isSubmittingRef.current = true;
+    setIsEditingScore(false);
+
+    const reason = window.prompt("Please enter a reason for overriding this score:");
+    if (reason === null) {
+      isSubmittingRef.current = false;
+      return;
+    }
+    
+    try {
+      const { default: api } = await import("../lib/api");
+      await api.patch(`/api/audio/${call?.id}/review`, {
+        overridden_score: newScore,
+        reason: reason || "Manual override"
+      });
+      refetch();
+    } catch (err) {
+      alert("Failed to save score override.");
+    } finally {
+      isSubmittingRef.current = false;
+    }
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleScoreSubmit(editScoreValue);
+    } else if (e.key === 'Escape') {
+      setIsEditingScore(false);
+    }
+  };
+
+  const onBlur = () => {
+    setTimeout(() => {
+      if (!isSubmittingRef.current && isEditingScore) {
+        handleScoreSubmit(editScoreValue);
+      }
+    }, 150);
+  };
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -161,20 +219,69 @@ export function CallDetail() {
 
           {/* QA Score Badge */}
           {!isProcessing && (
-            <div className={cn(
-              'flex flex-col items-center px-4 py-3 rounded-xl border flex-shrink-0',
-              score >= 85 ? 'bg-emerald-500/10 border-emerald-500/20' :
-              score >= 70 ? 'bg-amber-500/10 border-amber-500/20' : 'bg-red-500/10 border-red-500/20'
-            )}>
-              <span className={cn(
-                'text-2xl font-bold',
-                score >= 85 ? 'text-emerald-400' : score >= 70 ? 'text-amber-400' : 'text-red-400'
-              )}>{score}</span>
+            <div 
+              onDoubleClick={() => {
+                if (isQAOrAdmin) {
+                  setIsEditingScore(true);
+                  setEditScoreValue(score.toString());
+                }
+              }}
+              className={cn(
+                'flex flex-col items-center px-4 py-3 rounded-xl border flex-shrink-0 select-none',
+                score >= 85 ? 'bg-emerald-500/10 border-emerald-500/20' :
+                score >= 70 ? 'bg-amber-500/10 border-amber-500/20' : 'bg-red-500/10 border-red-500/20',
+                isQAOrAdmin && 'cursor-pointer hover:border-indigo-500/50',
+                isEditingScore && 'ring-2 ring-indigo-500 border-transparent'
+              )}
+              title={isQAOrAdmin ? "Double click to edit score" : undefined}
+            >
+              {isEditingScore ? (
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  className="w-16 text-center bg-background border border-border rounded text-lg font-bold text-foreground focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  value={editScoreValue}
+                  onChange={(e) => setEditScoreValue(e.target.value)}
+                  onKeyDown={onKeyDown}
+                  onBlur={onBlur}
+                  autoFocus
+                />
+              ) : (
+                <span className={cn(
+                  'text-2xl font-bold',
+                  score >= 85 ? 'text-emerald-400' : score >= 70 ? 'text-amber-400' : 'text-red-400'
+                )}>{score}</span>
+              )}
               <span className="text-muted-foreground text-xs">QA Score</span>
             </div>
           )}
         </div>
       </div>
+
+      {/* Active QA Alarm Alert */}
+      {call.qa_alarm && !call.overridden_score && (
+        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-start gap-3">
+          <ShieldAlert className="text-red-500 flex-shrink-0 mt-0.5" size={20} />
+          <div>
+            <h4 className="text-red-400 text-sm font-semibold">Active QA Alarm: Abuse Detected</h4>
+            <p className="text-xs text-foreground/90 mt-1">
+              {call.qa_alarm_reason || "Potential manipulative behavior or abuse has been flagged on this call."}
+            </p>
+            {call.qa_alarm_evidence && (
+              <div className="text-[11px] text-muted-foreground bg-black/25 p-2 rounded border border-border mt-2 font-mono leading-relaxed">
+                <span className="text-foreground/70 font-semibold block mb-1">Triggering Evidence:</span>
+                {call.qa_alarm_evidence}
+              </div>
+            )}
+            {isQAOrAdmin && (
+              <p className="text-[10px] text-indigo-400 mt-2 font-semibold">
+                💡 Double click the QA Score badge on the right to override the score and resolve this alarm.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Processing State Indicator */}
       {isProcessing && (
@@ -395,6 +502,50 @@ export function CallDetail() {
                   )}
                 </CardContent>
               </Card>
+
+              {/* ── Card 4: Score Override History ── */}
+              {call.override_audits && call.override_audits.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      🕒 Score Override History
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="relative border-l-2 border-border pl-4 space-y-4">
+                      {call.override_audits.map((audit) => (
+                        <div key={audit.id} className="relative">
+                          {/* Dot marker */}
+                          <div className="absolute -left-[21px] top-1.5 size-2 rounded-full bg-indigo-500 border border-card animate-pulse" />
+                          <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+                            <span className="font-semibold text-foreground">{audit.reviewer_name}</span>
+                            <span>{new Date(audit.created_at).toLocaleString()}</span>
+                          </div>
+                          <div className="text-xs text-foreground bg-secondary/30 rounded p-2 border border-border">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-[10px] bg-secondary px-1.5 py-0.5 rounded text-muted-foreground">
+                                Score Changed
+                              </span>
+                              <span className="font-bold text-red-400">
+                                {audit.old_score ?? 'N/A'}
+                              </span>
+                              <span className="text-muted-foreground">→</span>
+                              <span className="font-bold text-emerald-400">
+                                {audit.new_score}
+                              </span>
+                            </div>
+                            {audit.reason && (
+                              <p className="text-[11px] text-slate-300 leading-relaxed italic">
+                                "{audit.reason}"
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
             </div>
 
             {/* Right: Interactive Transcript */}

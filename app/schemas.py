@@ -26,6 +26,11 @@ class EmployeeCreate(BaseModel):
     tier: str = "bronze"
     skills: Optional[dict] = None
     emotion_history: Optional[List[float]] = None
+    phone_number: Optional[str] = None
+
+
+
+
 
 
 class AgentMasteryOut(BaseModel):
@@ -53,6 +58,20 @@ class EmployeeOut(BaseModel):
     agent_tenure_days: Optional[int] = 0
     mastery_stats: Optional[AgentMasteryOut] = None
     created_at: datetime
+
+
+class BulkEmployeeFailure(BaseModel):
+    index: int
+    employee_code: Optional[str] = None
+    error: str
+
+
+class BulkEmployeeResult(BaseModel):
+    success: List[EmployeeOut]
+    failed: List[BulkEmployeeFailure]
+    message: str
+    success_count: int
+    failed_count: int
 
 
 # ===========================
@@ -239,6 +258,9 @@ class CallOut(BaseModel):
     overridden_score: Optional[float] = None
     reviewer_notes: Optional[str] = None
     reviewed_at: Optional[datetime] = None
+    qa_alarm: bool = False
+    qa_alarm_reason: Optional[str] = None
+    qa_alarm_evidence: Optional[str] = None
 
     @field_validator("transcript", "strengths", "weaknesses", mode="before")
     @classmethod
@@ -280,6 +302,7 @@ class CallOut(BaseModel):
 class CallReviewUpdate(BaseModel):
     overridden_score: Optional[float] = None
     reviewer_notes: Optional[str] = None
+    reason: Optional[str] = None
 
 
 class CallUploadResponse(BaseModel):
@@ -528,6 +551,18 @@ class ViolationItemOut(BaseModel):
     timestamp: Optional[str] = None
     evidence: Optional[str] = None
 
+class ScoreOverrideAuditOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    call_id: int
+    reviewer_id: int
+    reviewer_name: str
+    old_score: Optional[float] = None
+    new_score: float
+    reason: Optional[str] = None
+    created_at: datetime
+
 class CallDetailResponse(CallOut):
     model_config = ConfigDict(from_attributes=True)
     
@@ -535,3 +570,18 @@ class CallDetailResponse(CallOut):
     strengths: List[StrengthItem] = []
     deductions: List[DeductionItem] = []
     violations: List[ViolationItemOut] = []
+    override_audits: List[ScoreOverrideAuditOut] = []
+
+
+class BulkCallItemResult(BaseModel):
+    filename: str
+    success: bool
+    call_id: Optional[int] = None
+    error: Optional[str] = None
+
+
+class BulkCallUploadResponse(BaseModel):
+    results: List[BulkCallItemResult]
+    success_count: int
+    failed_count: int
+    message: str

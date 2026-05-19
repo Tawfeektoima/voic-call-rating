@@ -95,7 +95,7 @@ export function HRDashboard() {
   const { userRole } = useApp();
   const navigate = useNavigate();
   
-  if (userRole !== 'admin' && userRole !== 'hr_manager' && userRole !== 'manager') {
+  if (userRole !== 'admin' && userRole !== 'hr_manager' && userRole !== 'manager' && userRole !== 'qa') {
     return (
       <div className="p-10 flex flex-col items-center justify-center text-center">
         <ShieldAlert size={48} className="text-red-500 mb-4" />
@@ -115,6 +115,15 @@ export function HRDashboard() {
     queryFn: async () => {
       const { default: api } = await import("../lib/api");
       const res = await api.get("/api/hr/violations/pending");
+      return res.data;
+    }
+  });
+
+  const { data: pendingAlarms } = useQuery({
+    queryKey: ["qa-alarms-pending"],
+    queryFn: async () => {
+      const { default: api } = await import("../lib/api");
+      const res = await api.get("/api/hr/alarms/pending");
       return res.data;
     }
   });
@@ -208,8 +217,53 @@ export function HRDashboard() {
         
         {/* Left Column: Pending Flags & Chart */}
         <div className="lg:col-span-1 space-y-6">
+          {/* Section: Pending QA Alarms */}
+          <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden flex flex-col h-[280px]">
+            <div className="p-4 border-b border-border bg-red-500/5 flex items-center justify-between">
+              <h3 className="font-semibold text-foreground flex items-center gap-2">
+                <ShieldAlert size={16} className="text-red-500 animate-pulse" /> 
+                Pending QA Alarms
+              </h3>
+              <span className="text-xs font-bold bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full">
+                {pendingAlarms?.length || 0}
+              </span>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {(!pendingAlarms || pendingAlarms.length === 0) ? (
+                <div className="bg-emerald-500/5 border border-emerald-500/10 rounded-lg p-4 text-center">
+                  <div className="flex items-center justify-center gap-2 text-emerald-500 text-sm font-semibold">
+                    <CheckCircle2 size={16} />
+                    No pending QA alarms
+                  </div>
+                </div>
+              ) : (
+                pendingAlarms.map((a: any) => (
+                  <div key={a.call_id} className="bg-secondary/30 border border-border rounded-lg p-3 relative group">
+                    <div className="flex justify-between items-start mb-2">
+                      <p className="text-xs font-bold text-foreground">{a.employee_name}</p>
+                      <button 
+                        onClick={() => navigate(`/calls/${a.call_id}`)}
+                        className="text-[10px] text-indigo-400 hover:text-indigo-300 font-mono flex items-center gap-1 hover:underline"
+                      >
+                        Call #{a.call_id} <ChevronRight size={10} />
+                      </button>
+                    </div>
+                    <div className="text-[10px] text-red-400 font-medium mb-1">
+                      {a.qa_alarm_reason}
+                    </div>
+                    {a.qa_alarm_evidence && (
+                      <div className="text-[9px] text-muted-foreground line-clamp-2 bg-black/20 p-1.5 rounded border border-border mt-1">
+                        {a.qa_alarm_evidence}
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
           {/* Section 2: Pending HR Flags */}
-          <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden flex flex-col h-[400px]">
+          <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden flex flex-col h-[280px]">
             <div className="p-4 border-b border-border bg-amber-500/5 flex items-center justify-between">
               <h3 className="font-semibold text-foreground flex items-center gap-2">
                 <ShieldAlert size={16} className="text-amber-500" /> 

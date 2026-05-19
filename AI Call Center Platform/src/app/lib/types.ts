@@ -219,6 +219,21 @@ export interface Call {
   outcome?: CallOutcome | null;
   sales_eval_data?: SalesEvalData | null;
   violations?: ViolationItemOut[];
+  qa_alarm?: boolean;
+  qa_alarm_reason?: string | null;
+  qa_alarm_evidence?: string | null;
+  override_audits?: ScoreOverrideAudit[] | null;
+}
+
+export interface ScoreOverrideAudit {
+  id: number;
+  call_id: number;
+  reviewer_id: number;
+  reviewer_name: string;
+  old_score: number | null;
+  new_score: number;
+  reason: string | null;
+  created_at: string;
 }
 
 export interface EmployeeRanking {

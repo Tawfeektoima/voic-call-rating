@@ -31,12 +31,15 @@ export function AgentProfile() {
   const { userRole, currentUser } = useApp();
   
   // For agents, always show their own profile. For others, allow switching via ID.
-  const employeeId = userRole === 'agent' ? currentUser.id : (id ? parseInt(id) : currentUser.id || 1);
+  const employeeId = (userRole === 'agent' || id === 'me') ? currentUser?.id : (id ? parseInt(id) : currentUser?.id);
   
   const { data: performance, isLoading: perfLoading } = useMyPerformance(employeeId);
   const { data: agent, isLoading: agentLoading } = useAgentDetails(employeeId);
   const { data: allAgents } = useAgents();
-  const { data: recentCalls, isLoading: callsLoading } = useCalls({ employee_id: employeeId } as any);
+  const { data: recentCalls, isLoading: callsLoading } = useCalls(
+    { employee_code: agent?.employee_code },
+    { enabled: !!agent?.employee_code }
+  );
 
   if (agentLoading || perfLoading) {
     return (

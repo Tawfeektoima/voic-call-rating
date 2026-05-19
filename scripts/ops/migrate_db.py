@@ -60,6 +60,9 @@ if table_exists("calls"):
     changes += add_column("calls", "dob_verified",          "BOOLEAN",        "0")
     changes += add_column("calls", "de_escalation_success", "BOOLEAN",        "0")
     changes += add_column("calls", "sales_eval_data",       "JSON",           None)
+    changes += add_column("calls", "qa_alarm",              "BOOLEAN",        "0")
+    changes += add_column("calls", "qa_alarm_reason",       "TEXT",           None)
+    changes += add_column("calls", "qa_alarm_evidence",     "TEXT",           None)
 else:
     print("\n[calls] Table does not exist yet (will be created by SQLAlchemy).")
 
@@ -85,6 +88,26 @@ if table_exists("employees"):
     changes += add_column("employees", "phone_number",       "VARCHAR(50)",    None)
     changes += add_column("employees", "emotion_history",    "JSON",           None)
     changes += add_column("employees", "agent_tenure_days",  "INTEGER",        None)
+
+# ── Table: score_override_audits ──
+if not table_exists("score_override_audits"):
+    print("\n[score_override_audits] Creating table...")
+    cursor.execute("""
+        CREATE TABLE score_override_audits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            call_id INTEGER NOT NULL,
+            reviewer_id INTEGER NOT NULL,
+            reviewer_name VARCHAR(255) NOT NULL,
+            old_score FLOAT,
+            new_score FLOAT NOT NULL,
+            reason TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(call_id) REFERENCES calls(id),
+            FOREIGN KEY(reviewer_id) REFERENCES employees(id)
+        );
+    """)
+    print("  + Created table score_override_audits")
+    changes += 1
 
 conn.commit()
 conn.close()

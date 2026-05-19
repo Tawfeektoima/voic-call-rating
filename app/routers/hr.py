@@ -1,19 +1,27 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, cast, Date, Integer
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
+import io
+import pandas as pd
 
 from app.database import get_db
-from app.models import AgentViolation, Employee, UserRole, SystemLog
+from app.models import AgentViolation, Employee, UserRole, SystemLog, Call, Campaign
 from app.routers.auth import get_current_user
 from app.schemas import (
     AgentViolationHistory,
     AgentViolationOut,
     ViolationSummaryRow,
     PendingViolationOut,
-    ViolationStats
+    ViolationStats,
+    EmployeeCreate,
+    BulkEmployeeFailure,
+    BulkEmployeeResult,
+    EmployeeOut
 )
+from app.security import get_password_hash
 
 router = APIRouter(prefix="/api/hr", tags=["HR Violations"])
 
@@ -28,7 +36,7 @@ def get_violations_summary(
     Returns per-agent violation counts grouped by severity.
     Accessible by: admin, hr_manager only.
     """
-    if current_user.role not in [UserRole.ADMIN, UserRole.HR_MANAGER]:
+    if current_user.role not in HR_ROLES:
         raise HTTPException(status_code=403, detail="Access denied.")
 
     summary_query = (
@@ -73,7 +81,7 @@ def get_pending_hr_violations(
     Returns violations where hr_flagged=True, ordered by severity then date.
     Accessible by: admin, hr_manager only.
     """
-    if current_user.role not in [UserRole.ADMIN, UserRole.HR_MANAGER]:
+    if current_user.role not in HR_ROLES:
         raise HTTPException(status_code=403, detail="Access denied.")
 
     violations = (
@@ -108,7 +116,7 @@ def get_violation_stats(
     """
     Returns platform-wide violation statistics for the dashboard.
     """
-    if current_user.role not in [UserRole.ADMIN, UserRole.HR_MANAGER]:
+    if current_user.role not in HR_ROLES:
         raise HTTPException(status_code=403, detail="Access denied.")
 
     now = datetime.now(timezone.utc)
@@ -222,3 +230,389 @@ def get_agent_violations(
         total_deductions=total_deductions,
         violations=v_outs
     )
+
+
+@router.get("/alarms/pending")
+def get_pending_qa_alarms(
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    """
+    Returns pending QA alarms (calls where qa_alarm=True and overridden_score is None).
+    Accessible by: admin, hr_manager, qa.
+    """
+    if current_user.role not in HR_ROLES:
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    # Fetch calls with active alarms
+    calls = (
+        db.query(Call, Employee)
+        .join(Employee, Call.employee_id == Employee.id)
+        .filter(Call.qa_alarm == True)
+        .filter(Call.overridden_score == None)
+        .order_by(Call.created_at.desc())
+        .all()
+    )
+
+    results = []
+    for call, emp in calls:
+        results.append({
+            "call_id": call.id,
+            "employee_id": call.employee_id,
+            "employee_name": emp.name,
+            "qa_alarm_reason": call.qa_alarm_reason,
+            "qa_alarm_evidence": call.qa_alarm_evidence,
+            "created_at": call.created_at,
+            "original_score": call.evaluation_score
+        })
+    return results
+
+
+@router.get("/template")
+def download_template(
+    current_user: Employee = Depends(get_current_user)
+):
+    """
+    Returns a downloadable CSV template for bulk importing agents.
+    """
+    if current_user.role not in (UserRole.ADMIN, UserRole.HR_MANAGER):
+        raise HTTPException(status_code=403, detail="Only admins or HR managers can access onboarding templates.")
+    
+    csv_data = "Name,Email,Employee Code,Campaign,Phone Number,Role,Department\nJohn Doe,john.doe@example.com,EMP001,Sales,+1234567890,AGENT,Support\n"
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=agent_import_template.csv"}
+    )
+
+
+@router.post("/preview")
+def preview_bulk_agents(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
+):
+    """
+    Accepts a CSV/Excel file, parses it, validates constraints and uniqueness,
+    and returns a preview of rows with error messages (without database commits).
+    """
+    if current_user.role not in (UserRole.ADMIN, UserRole.HR_MANAGER):
+        raise HTTPException(status_code=403, detail="Only admins or HR managers can preview onboarding files.")
+
+    filename = file.filename.lower()
+    try:
+        contents = file.file.read()
+        if filename.endswith(".csv"):
+            df = pd.read_csv(io.BytesIO(contents))
+        elif filename.endswith((".xlsx", ".xls")):
+            df = pd.read_excel(io.BytesIO(contents))
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported file format. Please upload a .csv, .xlsx, or .xls file.")
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=400, detail=f"Failed to parse file: {str(e)}")
+
+    df = df.fillna("")
+    # Normalize headers
+    df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+
+    # Map possible column names
+    col_mapping = {
+        "name": "name",
+        "email": "email",
+        "employee_code": "employee_code",
+        "code": "employee_code",
+        "campaign_name": "campaign_name",
+        "campaign": "campaign_name",
+        "phone_number": "phone_number",
+        "phone": "phone_number",
+        "role": "role",
+        "department": "department",
+        "password": "password"
+    }
+    df = df.rename(columns={c: col_mapping[c] for c in df.columns if c in col_mapping})
+
+    # Validate that we have the minimum required columns
+    required_cols = ["name", "email", "employee_code"]
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required columns in file: {', '.join([c.replace('_', ' ').title() for c in missing_cols])}"
+        )
+
+    preview_data = []
+    seen_codes = set()
+    seen_emails = set()
+
+    for i, (_, row) in enumerate(df.iterrows()):
+        idx = i + 1
+        name = str(row.get("name", "")).strip()
+        email = str(row.get("email", "")).strip()
+        employee_code = str(row.get("employee_code", "")).strip()
+        campaign_name = str(row.get("campaign_name", "")).strip()
+        phone_number = str(row.get("phone_number", "")).strip()
+        role = str(row.get("role", "AGENT")).strip().upper()
+        department = str(row.get("department", "")).strip()
+
+        errors = []
+
+        # Name validation
+        if not name:
+            errors.append("Name is required.")
+
+        # Email validation
+        if not email:
+            errors.append("Email is required.")
+        elif "@" not in email:
+            errors.append("Invalid email format.")
+        else:
+            db_emp_email = db.query(Employee).filter(Employee.email == email).first()
+            if db_emp_email:
+                errors.append(f"Email '{email}' is already registered.")
+            if email in seen_emails:
+                errors.append(f"Duplicate email '{email}' in upload file.")
+            seen_emails.add(email)
+
+        # Employee Code validation
+        if not employee_code:
+            errors.append("Employee code is required.")
+        else:
+            db_emp_code = db.query(Employee).filter(Employee.employee_code == employee_code).first()
+            if db_emp_code:
+                errors.append(f"Employee code '{employee_code}' is already registered.")
+            if employee_code in seen_codes:
+                errors.append(f"Duplicate employee code '{employee_code}' in upload file.")
+            seen_codes.add(employee_code)
+
+        # Campaign validation
+        if campaign_name:
+            db_camp = db.query(Campaign).filter(Campaign.name == campaign_name).first()
+            if not db_camp:
+                errors.append(f"Campaign '{campaign_name}' does not exist.")
+
+        # Role validation
+        valid_roles = [UserRole.AGENT.value, UserRole.QA.value, UserRole.ADMIN.value, UserRole.HR_MANAGER.value]
+        if role not in valid_roles:
+            errors.append(f"Invalid role '{role}'. Must be one of: {', '.join(valid_roles)}")
+
+        preview_data.append({
+            "index": idx,
+            "name": name,
+            "email": email,
+            "employee_code": employee_code,
+            "campaign_name": campaign_name,
+            "phone_number": phone_number,
+            "role": role,
+            "department": department or campaign_name,
+            "errors": errors,
+            "isValid": len(errors) == 0
+        })
+
+    valid_count = sum(1 for item in preview_data if item["isValid"])
+    summary = {
+        "total": len(preview_data),
+        "valid": valid_count,
+        "invalid": len(preview_data) - valid_count
+    }
+
+    return {
+        "data": preview_data,
+        "summary": summary
+    }
+
+
+@router.post("/import", response_model=BulkEmployeeResult)
+def import_bulk_agents(
+    employees: List[dict],
+    atomic: bool = Query(False),
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
+):
+    """
+    Imports multiple agents. If atomic is True, any validation failure
+    causes the entire import to fail. Otherwise, imports valid rows
+    and reports failures on a per-row basis.
+    """
+    if current_user.role not in (UserRole.ADMIN, UserRole.HR_MANAGER):
+        raise HTTPException(status_code=403, detail="Only admins or HR managers can bulk import agents.")
+
+    success_list = []
+    failed_list = []
+    seen_codes = set()
+    seen_emails = set()
+
+    # Pre-validation pass (especially important for atomic)
+    all_validation_passed = True
+    row_validation_errors = []
+
+    for idx, item in enumerate(employees):
+        row_num = item.get("index", idx + 1)
+        name = str(item.get("name", "")).strip()
+        email = str(item.get("email", "")).strip()
+        employee_code = str(item.get("employee_code", "")).strip()
+        campaign_name = str(item.get("campaign_name", "")).strip()
+        phone_number = str(item.get("phone_number", "")).strip()
+        role = str(item.get("role", "AGENT")).strip().upper()
+        department = str(item.get("department", "")).strip()
+        password = str(item.get("password", "")).strip()
+
+        errors = []
+
+        if not name:
+            errors.append("Name is required.")
+        if not email:
+            errors.append("Email is required.")
+        elif "@" not in email:
+            errors.append("Invalid email format.")
+        else:
+            db_emp_email = db.query(Employee).filter(Employee.email == email).first()
+            if db_emp_email:
+                errors.append(f"Email '{email}' is already registered.")
+            if email in seen_emails:
+                errors.append(f"Duplicate email '{email}' in batch.")
+            seen_emails.add(email)
+
+        if not employee_code:
+            errors.append("Employee code is required.")
+        else:
+            db_emp_code = db.query(Employee).filter(Employee.employee_code == employee_code).first()
+            if db_emp_code:
+                errors.append(f"Employee code '{employee_code}' is already registered.")
+            if employee_code in seen_codes:
+                errors.append(f"Duplicate employee code '{employee_code}' in batch.")
+            seen_codes.add(employee_code)
+
+        if campaign_name:
+            db_camp = db.query(Campaign).filter(Campaign.name == campaign_name).first()
+            if not db_camp:
+                errors.append(f"Campaign '{campaign_name}' does not exist.")
+
+        valid_roles = [UserRole.AGENT.value, UserRole.QA.value, UserRole.ADMIN.value, UserRole.HR_MANAGER.value]
+        if role not in valid_roles:
+            errors.append(f"Invalid role '{role}'. Must be one of: {', '.join(valid_roles)}")
+
+        if password and len(password) < 6:
+            errors.append("Password must be at least 6 characters long.")
+
+        if errors:
+            all_validation_passed = False
+            error_str = " | ".join(errors)
+            row_validation_errors.append((row_num, employee_code, error_str))
+
+    # If atomic mode is requested and we have failures, fail the entire import
+    if atomic and not all_validation_passed:
+        failures = [
+            BulkEmployeeFailure(index=row_num, employee_code=code, error=err)
+            for row_num, code, err in row_validation_errors
+        ]
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Atomic import failed. Some rows have validation errors, and no changes were made.",
+                "success_count": 0,
+                "failed_count": len(failures),
+                "failed": [f.model_dump() for f in failures],
+                "success": []
+            }
+        )
+
+    # Now perform the actual inserts
+    seen_codes = set()
+    seen_emails = set()
+
+    for idx, item in enumerate(employees):
+        row_num = item.get("index", idx + 1)
+        name = str(item.get("name", "")).strip()
+        email = str(item.get("email", "")).strip()
+        employee_code = str(item.get("employee_code", "")).strip()
+        campaign_name = str(item.get("campaign_name", "")).strip()
+        phone_number = str(item.get("phone_number", "")).strip()
+        role = str(item.get("role", "AGENT")).strip().upper()
+        department = str(item.get("department", "")).strip()
+        password = str(item.get("password", "")).strip()
+
+        errors = []
+        if not name:
+            errors.append("Name is required.")
+        if not email:
+            errors.append("Email is required.")
+        elif "@" not in email:
+            errors.append("Invalid email format.")
+        else:
+            db_emp_email = db.query(Employee).filter(Employee.email == email).first()
+            if db_emp_email:
+                errors.append(f"Email '{email}' is already registered.")
+            if email in seen_emails:
+                errors.append(f"Duplicate email '{email}' in batch.")
+            seen_emails.add(email)
+
+        if not employee_code:
+            errors.append("Employee code is required.")
+        else:
+            db_emp_code = db.query(Employee).filter(Employee.employee_code == employee_code).first()
+            if db_emp_code:
+                errors.append(f"Employee code '{employee_code}' is already registered.")
+            if employee_code in seen_codes:
+                errors.append(f"Duplicate employee code '{employee_code}' in batch.")
+            seen_codes.add(employee_code)
+
+        if campaign_name:
+            db_camp = db.query(Campaign).filter(Campaign.name == campaign_name).first()
+            if not db_camp:
+                errors.append(f"Campaign '{campaign_name}' does not exist.")
+
+        valid_roles = [UserRole.AGENT.value, UserRole.QA.value, UserRole.ADMIN.value, UserRole.HR_MANAGER.value]
+        if role not in valid_roles:
+            errors.append(f"Invalid role '{role}'. Must be one of: {', '.join(valid_roles)}")
+
+        if password and len(password) < 6:
+            errors.append("Password must be at least 6 characters long.")
+
+        if errors:
+            failed_list.append(BulkEmployeeFailure(
+                index=row_num,
+                employee_code=employee_code,
+                error=" | ".join(errors)
+            ))
+            continue
+
+        if not password:
+            password = f"Welcome_{employee_code}"
+
+        try:
+            hashed_pwd = get_password_hash(password)
+            db_employee = Employee(
+                name=name,
+                email=email,
+                employee_code=employee_code,
+                hashed_password=hashed_pwd,
+                role=UserRole(role),
+                phone_number=phone_number if phone_number else None,
+                department=department if department else (campaign_name if campaign_name else None)
+            )
+            db.add(db_employee)
+            db.commit()
+            db.refresh(db_employee)
+            success_list.append(db_employee)
+        except Exception as e:
+            db.rollback()
+            failed_list.append(BulkEmployeeFailure(
+                index=row_num,
+                employee_code=employee_code,
+                error=f"Database insertion failed: {str(e)}"
+            ))
+
+    message = f"Bulk onboarding completed. Successfully imported {len(success_list)} agents."
+    if failed_list:
+        message += f" Failed to import {len(failed_list)} agents due to errors."
+
+    return BulkEmployeeResult(
+        success=success_list,
+        failed=failed_list,
+        message=message,
+        success_count=len(success_list),
+        failed_count=len(failed_list)
+    )
+
