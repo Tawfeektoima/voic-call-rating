@@ -81,6 +81,8 @@ export interface WeaknessItem {
   issue: string;
   detail: string;
   deduction: number;
+  score?: number;
+  max?: number;
 }
 
 export interface CallOutcome {

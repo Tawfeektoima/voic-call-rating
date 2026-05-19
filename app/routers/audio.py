@@ -117,7 +117,7 @@ def get_call_status(
         for w in weaknesses_list:
             # Try to extract score/max from explicit fields or fallback to string parsing
             score = w.get("score")
-            max_val = w.get("max_score")
+            max_val = w.get("max")
             
             if score is None or max_val is None:
                 detail = w.get("detail", "")

@@ -451,6 +451,48 @@ def process_call_audio_task(self, call_id: int):
             call.closing_ok = eval_result.closing_ok
             call.dob_verified = eval_result.dob_verified
 
+            # --- Score Breakdown Saver (TASK FIX-SB01) ---
+            # Rebuild weaknesses with full score/max structure from breakdown
+            if eval_result.raw_sales_data:
+                breakdown = eval_result.raw_sales_data.get("score_breakdown") or {}
+                max_pts = {
+                    "opening": 10,
+                    "script_compliance": 30,
+                    "customer_handling": 20,
+                    "conduct": 25,
+                    "closing": 15,
+                }
+                structured_weaknesses = []
+                for field, max_val in max_pts.items():
+                    earned = float(breakdown.get(field, 0) or 0)
+                    deducted = max_val - earned
+                    structured_weaknesses.append({
+                        "issue": field.replace("_", " ").title(),
+                        "detail": f"Score {earned}/{max_val}",
+                        "deduction": deducted,
+                        "score": earned,
+                        "max": max_val,
+                    })
+                call.weaknesses = structured_weaknesses
+
+            # --- Violations Registration (TASK FIX-SB01) ---
+            if eval_result.raw_violations and call.employee_id:
+                from app.violations import apply_violations
+                violations_result = apply_violations(
+                    base_score=call.evaluation_score or 0.0,
+                    raw_violations=eval_result.raw_violations,
+                    employee_id=call.employee_id,
+                    call_id=call.id,
+                    campaign_id=call.campaign_id,
+                    db=db,
+                )
+                # Apply score deduction from violations
+                if violations_result.get("final_score") is not None:
+                    call.evaluation_score = violations_result["final_score"]
+                # Flag call for HR review if any violation triggered HR
+                if violations_result.get("hr_flag"):
+                    call.needs_review = True
+
             # Sales Data & Violations (Task 5)
             if campaign_type_value == "sales" and eval_result.raw_sales_data:
                 call.sales_eval_data = eval_result.raw_sales_data
@@ -667,6 +709,45 @@ def evaluate_live_call_task(call_id: int):
         call.opening_ok = eval_result.opening_ok
         call.closing_ok = eval_result.closing_ok
         call.dob_verified = eval_result.dob_verified
+
+        # --- Score Breakdown Saver (TASK FIX-SB01) ---
+        if eval_result.raw_sales_data:
+            breakdown = eval_result.raw_sales_data.get("score_breakdown") or {}
+            max_pts = {
+                "opening": 10,
+                "script_compliance": 30,
+                "customer_handling": 20,
+                "conduct": 25,
+                "closing": 15,
+            }
+            structured_weaknesses = []
+            for field, max_val in max_pts.items():
+                earned = float(breakdown.get(field, 0) or 0)
+                deducted = max_val - earned
+                structured_weaknesses.append({
+                    "issue": field.replace("_", " ").title(),
+                    "detail": f"Score {earned}/{max_val}",
+                    "deduction": deducted,
+                    "score": earned,
+                    "max": max_val,
+                })
+            call.weaknesses = structured_weaknesses
+
+        # --- Violations Registration (TASK FIX-SB01) ---
+        if eval_result.raw_violations and call.employee_id:
+            from app.violations import apply_violations
+            violations_result = apply_violations(
+                base_score=call.evaluation_score or 0.0,
+                raw_violations=eval_result.raw_violations,
+                employee_id=call.employee_id,
+                call_id=call.id,
+                campaign_id=call.campaign_id,
+                db=db,
+            )
+            if violations_result.get("final_score") is not None:
+                call.evaluation_score = violations_result["final_score"]
+            if violations_result.get("hr_flag"):
+                call.needs_review = True
 
         # Save Outcomes
         outcome = CallOutcome(

@@ -128,6 +128,8 @@ class WeaknessItem(BaseModel):
     issue: str = Field(..., description="Short category label for the weakness")
     detail: str = Field(..., description="Explanation of what was wrong")
     deduction: float = Field(..., description="Points deducted for this weakness")
+    score: Optional[float] = Field(default=None, description="Points earned in this category")
+    max: Optional[int] = Field(default=None, description="Maximum possible points for this category")
 
 
 class EvaluationResult(BaseModel):

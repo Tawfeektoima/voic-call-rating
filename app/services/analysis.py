@@ -408,6 +408,17 @@ def evaluate_transcript(transcript: str, campaign_prompt: str, campaign_type: st
 
             # ✅ Route to correct schema
             if campaign_type == "sales":
+                # Normalize strengths to avoid validation failure if they are raw strings
+                raw_strengths = result_dict.get("strengths")
+                normalized_strengths = []
+                if isinstance(raw_strengths, list):
+                    for item in raw_strengths:
+                        if isinstance(item, str):
+                            normalized_strengths.append({"issue": item, "detail": ""})
+                        elif isinstance(item, dict):
+                            normalized_strengths.append(item)
+                result_dict["strengths"] = normalized_strengths
+
                 sales_result = SalesEvaluationResult(**result_dict)
 
                 # Build weaknesses list from score_breakdown for DB compatibility
@@ -434,6 +445,8 @@ def evaluate_transcript(transcript: str, campaign_prompt: str, campaign_type: st
                                     issue=field.replace("_", " ").title(),
                                     detail=f"Score {earned}/{max_val}",
                                     deduction=deducted,
+                                    score=earned,
+                                    max=max_val,
                                 )
                             )
 
