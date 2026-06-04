@@ -77,6 +77,7 @@ export function Dashboard() {
   const { userRole } = useApp();
   const navigate = useNavigate();
   const isAdmin = userRole === 'admin';
+  const canSeeLeadInsights = isAdmin || userRole === 'hr_manager';
   const canSeeQueueDepth = userRole === 'admin' || userRole === 'hr_manager' || userRole === 'qa';
 
   const { data: dashboard, isLoading: kpisLoading, dataUpdatedAt } = useDashboard();
@@ -236,7 +237,7 @@ export function Dashboard() {
                       </p>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      {isAdminOrManager && call.lead_status && (
+                      {canSeeLeadInsights && call.lead_status && (
                         <span className={cn(
                           'text-xs px-2 py-0.5 rounded-full capitalize',
                           call.lead_status === 'hot' ? 'bg-red-500/15 text-red-400' :
@@ -270,7 +271,7 @@ export function Dashboard() {
         {/* Right column: Leads (admin) + Alerts */}
         <div className="space-y-4">
           {/* Lead Status - Admin/Manager only */}
-          {isAdminOrManager && (
+          {canSeeLeadInsights && (
             <div className="bg-card border border-border rounded-xl p-4">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-foreground text-sm font-semibold">Hot Leads</h3>
