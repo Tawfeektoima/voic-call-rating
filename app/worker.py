@@ -93,6 +93,7 @@ celery_app.conf.update(
     task_acks_late=False,            # Acknowledge immediately to remove from queue
     worker_prefetch_multiplier=1,    # Only take one task at a time
     broker_connection_retry_on_startup=True, # Address Celery 6.0 deprecation
+    broker_channel_error_retry=True,  # Retry Redis channel errors like MISCONF instead of crashing
     task_ignore_result=True,         # Results are saved to DB, no need for Redis storage
 )
 

@@ -1,6 +1,11 @@
 import os
 import gc
 import subprocess
+import warnings
+
+warnings.filterwarnings("ignore", message="torchcodec is not installed correctly")
+warnings.filterwarnings("ignore", module="torchcodec")
+warnings.filterwarnings("ignore", category=UserWarning, module=r"pyannote\.audio\.core\.io")
 try:
     import torch
     import whisperx
