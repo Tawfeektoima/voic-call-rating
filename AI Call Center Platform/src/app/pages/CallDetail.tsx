@@ -36,7 +36,7 @@ export function CallDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { userRole } = useApp();
-  const isAdminOrManager = userRole === 'admin' || userRole === 'manager';
+  const canSeeLeadStatus = userRole === 'admin' || userRole === 'hr_manager' || userRole === 'qa';
   const isQAOrAdmin = userRole === 'admin' || userRole === 'qa';
 
   const [isEditingScore, setIsEditingScore] = useState(false);
@@ -179,7 +179,7 @@ export function CallDetail() {
                 <Star size={10} />Golden Moment
               </span>
             )}
-            {isAdminOrManager && leadC && (
+            {canSeeLeadStatus && leadC && (
               <span className={cn(
                 'flex items-center gap-1 text-xs px-2 py-0.5 rounded-full',
                 call.lead_status === 'hot' ? 'bg-red-500/15 text-red-400 border border-red-500/20' :

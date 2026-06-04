@@ -5,10 +5,18 @@
 
 export enum UserRole {
   ADMIN = "admin",
-  MANAGER = "manager",
   QA = "qa",
   AGENT = "agent",
   HR_MANAGER = "hr_manager",
+}
+
+export interface CurrentUser {
+  id: number;
+  name: string;
+  email: string;
+  role: UserRole;
+  avatar: string;
+  account_status?: string;
 }
 
 export enum CallStatus {
@@ -58,6 +66,7 @@ export interface Agent {
   emotion_history?: number[];
   mastery_stats?: AgentMastery;
   created_at: string; // ISO format string
+  status?: string;
 }
 
 export interface Campaign {
@@ -77,12 +86,33 @@ export interface Campaign {
   avg_score: number;
 }
 
+/** Payload for creating a new campaign. */
+export interface CampaignCreate {
+  name: string;
+  description?: string;
+  type: string;
+  status?: string;
+  kpis?: string[];
+  color?: string;
+  evaluation_prompt: string;
+}
+
+/** Payload for updating an existing campaign (all fields optional). */
+export type CampaignUpdate = Partial<CampaignCreate>;
+
 export interface WeaknessItem {
   issue: string;
   detail: string;
   deduction: number;
   score?: number;
   max?: number;
+}
+
+/** A single strength item returned from the evaluation engine. */
+export interface StrengthItem {
+  text: string;
+  score?: number;
+  category?: string;
 }
 
 export interface CallOutcome {
@@ -108,7 +138,7 @@ export interface SalesScoreBreakdown {
   closing: number;
 }
 
-export type ViolationSeverity = "high" | "medium" | "low";
+export type ViolationSeverity = "critical" | "high" | "medium" | "low";
 export type PenaltyTier =
   | "Warning" | "1 HR" | "2 HR" | "3 HR"
   | "Half Day" | "Full Day" | "No Show" | "Termination";
@@ -180,7 +210,7 @@ export interface DeductionItem {
 
 export interface ViolationItemOut {
   violation_id: string;
-  severity: "low" | "medium" | "high" | "critical";
+  severity: ViolationSeverity;
   timestamp?: string;
   evidence?: string;
 }
@@ -292,6 +322,8 @@ export interface SystemMetrics {
   uptime: number;
   gpu_history: { time: string; value: number }[];
   inference_history: { time: string; value: number }[];
+  pipeline_latency: number;
+  services: { name: string; status: 'operational' | 'degraded' | 'offline'; latency: string }[];
 }
 
 export interface SystemAlert {

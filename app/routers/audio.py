@@ -16,6 +16,7 @@ from app.services.analysis import evaluate_transcript
 from app.worker import process_call_audio_task
 from app.routers.auth import get_current_user
 from app.models import UserRole, AgentViolation
+from app.services.audit import log_audit_event
 
 settings = get_settings()
 
@@ -23,6 +24,14 @@ router = APIRouter(prefix="/api/audio", tags=["Audio Processing"])
 
 # Ensure upload dir exists
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+
+
+def _remove_file_if_exists(file_path: str):
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+        except Exception:
+            pass
 
 
 
@@ -65,9 +74,13 @@ async def upload_audio(
             saved_size += len(chunk)
             if saved_size > settings.max_file_size_bytes:
                 f.close()
-                os.remove(file_path)
+                _remove_file_if_exists(file_path)
                 raise HTTPException(status_code=400, detail=f"File exceeds max size of {settings.MAX_FILE_SIZE_MB}MB")
             f.write(chunk)
+
+    if saved_size == 0:
+        _remove_file_if_exists(file_path)
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
     # 4. Create DB Record
     new_call = Call(
@@ -210,13 +223,22 @@ async def bulk_upload_audio(
                     f.write(chunk)
 
             if size_exceeded:
-                if os.path.exists(file_path):
-                    os.remove(file_path)
+                _remove_file_if_exists(file_path)
                 failed_count += 1
                 results.append(BulkCallItemResult(
                     filename=filename,
                     success=False,
                     error=f"File exceeds max size of {settings.MAX_FILE_SIZE_MB}MB"
+                ))
+                continue
+
+            if saved_size == 0:
+                _remove_file_if_exists(file_path)
+                failed_count += 1
+                results.append(BulkCallItemResult(
+                    filename=filename,
+                    success=False,
+                    error="Uploaded file is empty"
                 ))
                 continue
 
@@ -395,6 +417,18 @@ def review_call(
             created_at=datetime.now(timezone.utc)
         )
         db.add(audit_log)
+
+        # Log audit event (Task 0.8)
+        log_audit_event(
+            db=db,
+            action="SCORE_OVERRIDE",
+            actor_id=current_user.id,
+            actor_email=current_user.email,
+            target=f"Call #{call.id}",
+            before_state=str(old_score),
+            after_state=str(review.overridden_score),
+            reason=review.reason or review.reviewer_notes or "Manual override"
+        )
         
         # Override clears any active QA alarm and sets needs_review to False
         call.needs_review = False

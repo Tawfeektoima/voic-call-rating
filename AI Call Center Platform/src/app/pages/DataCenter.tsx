@@ -10,8 +10,8 @@ import { useCampaigns } from '../hooks/useCampaigns';
 import api from '../lib/api';
 import { cn } from '../components/ui/utils';
 
-type ExportFormat = 'json' | 'csv' | 'zip';
-type ExportType = 'transcripts' | 'master_sheet' | 'golden_moments' | 'agent_metrics';
+type ExportFormat = 'json' | 'csv' | 'zip' | 'xlsx';
+type ExportType = 'transcripts' | 'master_sheet' | 'xlsx_dataset' | 'golden_moments' | 'agent_metrics';
 
 interface ExportConfig {
   type: ExportType;
@@ -39,6 +39,16 @@ const exportTypes = [
     label: 'CSV Master Sheet',
     sub: 'Acoustic + semantic + business metadata for Power BI / Excel',
     formats: ['csv'] as ExportFormat[],
+    size: 'Auto',
+    records: 'All calls',
+  },
+  {
+    id: 'xlsx_dataset' as ExportType,
+    icon: FileSpreadsheet,
+    color: 'cyan',
+    label: 'XLSX Data-Science Dataset',
+    sub: 'Styled multi-sheet Excel package with RAG QA pairs and annotations',
+    formats: ['xlsx'] as ExportFormat[],
     size: 'Auto',
     records: 'All calls',
   },
@@ -108,6 +118,10 @@ export function DataCenter() {
   const [completedExports, setCompletedExports] = useState<string[]>([]);
   const [showCSVSchema, setShowCSVSchema] = useState(false);
   const [filterCampaign, setFilterCampaign] = useState<number | 'all'>('all');
+  const [filterDepartment, setFilterDepartment] = useState<string>('');
+  const [filterStartDate, setFilterStartDate] = useState<string>('');
+  const [filterEndDate, setFilterEndDate] = useState<string>('');
+  const [filterAgentRole, setFilterAgentRole] = useState<string>('all');
 
   const { data: dashboard } = useDashboard();
   const { data: campaigns } = useCampaigns();
@@ -115,9 +129,17 @@ export function DataCenter() {
   const handleExport = async (id: string) => {
     setExportingId(id);
     try {
+      const commonParams = {
+        campaign_id: filterCampaign === 'all' ? undefined : filterCampaign,
+        department: filterDepartment || undefined,
+        start_date: filterStartDate || undefined,
+        end_date: filterEndDate || undefined,
+        agent_role: filterAgentRole === 'all' ? undefined : filterAgentRole.toUpperCase(),
+      };
+
       if (id === 'master_sheet') {
         const response = await api.get('/api/export/csv', {
-          params: { campaign_id: filterCampaign === 'all' ? undefined : filterCampaign },
+          params: commonParams,
           responseType: 'blob'
         });
         const url = URL.createObjectURL(new Blob([response.data]));
@@ -126,20 +148,26 @@ export function DataCenter() {
         a.download = `voiceqa_master_sheet_${Date.now()}.csv`;
         a.click();
         URL.revokeObjectURL(url);
-      } else if (id === 'transcripts') {
-        if (filterCampaign === 'all') {
-          alert('Please select a specific campaign for transcript ZIP export.');
-          setExportingId(null);
-          return;
-        }
-        const response = await api.get('/api/export/transcripts', {
-          params: { campaign_id: filterCampaign },
+      } else if (id === 'xlsx_dataset') {
+        const response = await api.get('/api/export/xlsx', {
+          params: commonParams,
           responseType: 'blob'
         });
         const url = URL.createObjectURL(new Blob([response.data]));
         const a = document.createElement('a');
         a.href = url;
-        a.download = `campaign_${filterCampaign}_transcripts.zip`;
+        a.download = `voiceqa_dataset_${Date.now()}.xlsx`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else if (id === 'transcripts') {
+        const response = await api.get('/api/export/transcripts', {
+          params: commonParams,
+          responseType: 'blob'
+        });
+        const url = URL.createObjectURL(new Blob([response.data]));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `voiceqa_transcripts_${Date.now()}.zip`;
         a.click();
         URL.revokeObjectURL(url);
       }
@@ -182,10 +210,11 @@ export function DataCenter() {
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-4 p-4 bg-card border border-border rounded-xl">
+      <div className="flex flex-wrap items-center gap-4 p-4 bg-card border border-border rounded-xl">
         <Filter size={14} className="text-muted-foreground" />
         <span className="text-xs text-muted-foreground">Export Filters:</span>
 
+        {/* Campaign Filter */}
         <select
           value={filterCampaign}
           onChange={e => setFilterCampaign(e.target.value === 'all' ? 'all' : parseInt(e.target.value))}
@@ -193,6 +222,44 @@ export function DataCenter() {
         >
           <option value="all">All Campaigns</option>
           {campaigns?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+
+        {/* Department Filter */}
+        <input
+          type="text"
+          placeholder="Department/Team"
+          value={filterDepartment}
+          onChange={e => setFilterDepartment(e.target.value)}
+          className="bg-secondary border border-border text-foreground placeholder:text-muted-foreground text-xs rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500 w-36"
+        />
+
+        {/* Date Filters */}
+        <div className="flex items-center gap-1.5">
+          <input
+            type="date"
+            value={filterStartDate}
+            onChange={e => setFilterStartDate(e.target.value)}
+            className="bg-secondary border border-border text-foreground text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-indigo-500"
+          />
+          <span className="text-xs text-muted-foreground">to</span>
+          <input
+            type="date"
+            value={filterEndDate}
+            onChange={e => setFilterEndDate(e.target.value)}
+            className="bg-secondary border border-border text-foreground text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-indigo-500"
+          />
+        </div>
+
+        {/* Agent Role Filter */}
+        <select
+          value={filterAgentRole}
+          onChange={e => setFilterAgentRole(e.target.value)}
+          className="bg-secondary border border-border text-foreground text-xs rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500"
+        >
+          <option value="all">All Roles</option>
+          <option value="agent">Agent</option>
+          <option value="qa">QA Analyst</option>
+          <option value="hr_manager">HR Manager</option>
         </select>
 
         {!isAdmin && (
@@ -206,7 +273,7 @@ export function DataCenter() {
       {/* Export Cards */}
       <div>
         <h3 className="text-foreground text-sm font-semibold mb-4">Strategic Export Hub</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {exportTypes.map(et => (
             <div key={et.id} className="relative">
               <ExportCard

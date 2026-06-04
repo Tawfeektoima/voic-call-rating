@@ -1,9 +1,11 @@
 import redis
 import os
 from typing import List
+from app.config import get_settings
 
 # Setup Redis client for router (Shared with ASR heartbeat)
-redis_router = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+settings = get_settings()
+redis_router = redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 async def get_best_gpu() -> int:
     """

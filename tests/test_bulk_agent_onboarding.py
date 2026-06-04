@@ -13,14 +13,23 @@ client = TestClient(app)
 TEST_ADMIN_CODE = "TEST_BULK_ADMIN"
 TEST_AGENT_CODE = "TEST_BULK_AGENT"
 
+import pytest
+
 def cleanup_test_employees():
     db: Session = SessionLocal()
     try:
         # Delete any test employees created during run
         db.query(Employee).filter(Employee.employee_code.like("TEST_BULK_%")).delete(synchronize_session=False)
+        db.query(Employee).filter(Employee.email.like("%_atomic@example.com")).delete(synchronize_session=False)
         db.commit()
     finally:
         db.close()
+
+@pytest.fixture(autouse=True)
+def run_around_tests():
+    cleanup_test_employees()
+    yield
+    cleanup_test_employees()
 
 def setup_campaigns():
     db: Session = SessionLocal()

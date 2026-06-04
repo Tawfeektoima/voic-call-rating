@@ -27,6 +27,33 @@ class EmployeeCreate(BaseModel):
     skills: Optional[dict] = None
     emotion_history: Optional[List[float]] = None
     phone_number: Optional[str] = None
+    status: str = "active"
+
+
+class EmployeeUpdate(BaseModel):
+    role: Optional[str] = None
+    status: Optional[str] = None
+
+
+class EmployeeStatusUpdate(BaseModel):
+    status: str
+
+
+class AuditEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    actor_id: Optional[int] = None
+    actor_email: Optional[str] = None
+    action: str
+    target: Optional[str] = None
+    before_state: Optional[str] = None
+    after_state: Optional[str] = None
+    reason: Optional[str] = None
+    success: bool = True
+    created_at: datetime
+
+
 
 
 
@@ -58,6 +85,7 @@ class EmployeeOut(BaseModel):
     agent_tenure_days: Optional[int] = 0
     mastery_stats: Optional[AgentMasteryOut] = None
     created_at: datetime
+    status: str = "active"
 
 
 class BulkEmployeeFailure(BaseModel):
@@ -91,8 +119,12 @@ class UserLogin(BaseModel):
 class MeResponse(BaseModel):
     id: int
     name: str
-    campaign_id: int
+    campaign_id: Optional[int] = None
     role: str
+    email: Optional[str] = None
+    avatar: Optional[str] = None
+    account_status: str = "active"
+    status: str = "active"
 
 class CampaignCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
@@ -364,6 +396,12 @@ class SystemMetricPoint(BaseModel):
     value: float
 
 
+class ServiceStatus(BaseModel):
+    name: str
+    status: str
+    latency: str
+
+
 class SystemMetrics(BaseModel):
     gpu_load: float
     cpu_load: float
@@ -374,6 +412,8 @@ class SystemMetrics(BaseModel):
     disk_usage: float
     gpu_history: List[SystemMetricPoint]
     inference_history: List[SystemMetricPoint]
+    pipeline_latency: float
+    services: List[ServiceStatus]
 
 
 class SystemLogOut(BaseModel):

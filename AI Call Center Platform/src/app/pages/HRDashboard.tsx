@@ -95,7 +95,7 @@ export function HRDashboard() {
   const { userRole } = useApp();
   const navigate = useNavigate();
   
-  if (userRole !== 'admin' && userRole !== 'hr_manager' && userRole !== 'manager' && userRole !== 'qa') {
+  if (userRole !== 'admin' && userRole !== 'hr_manager' && userRole !== 'qa') {
     return (
       <div className="p-10 flex flex-col items-center justify-center text-center">
         <ShieldAlert size={48} className="text-red-500 mb-4" />
@@ -465,4 +465,3 @@ export function HRDashboard() {
     </div>
   );
 }
-

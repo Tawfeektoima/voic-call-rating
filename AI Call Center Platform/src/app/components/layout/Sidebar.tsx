@@ -1,46 +1,48 @@
-import { NavLink, useLocation } from 'react-router';
+import { NavLink } from 'react-router';
 import {
   LayoutDashboard, Radio, Phone, BarChart3, Star, UserCircle,
   Database, Activity, ChevronLeft, ChevronRight, Shield, Zap,
-  Users, Settings, LogOut, Eye, EyeOff, ShieldAlert
+  Users, LogOut, Eye, EyeOff, ShieldAlert
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { UserRole } from '../../lib/types';
+import { ROLE_GRADIENT_COLORS, ROLE_LABELS } from '../../lib/roles';
 import { cn } from '../ui/utils';
 
-const navItems = [
-  { path: '/', label: 'Dashboard', agentLabel: 'My Dashboard', icon: LayoutDashboard, roles: ['admin', 'manager', 'qa', 'agent'] },
-  { path: '/campaigns', label: 'Campaigns', icon: Radio, roles: ['admin', 'manager', 'qa'] },
-  { path: '/calls', label: 'Call Explorer', agentLabel: 'My Calls', icon: Phone, roles: ['admin', 'manager', 'qa', 'agent'] },
-  { path: '/intelligence', label: 'BI Hub', icon: BarChart3, roles: ['admin', 'manager'] },
-  { path: '/success-library', label: 'Success Library', icon: Star, roles: ['admin', 'manager', 'qa', 'agent'] },
-  { path: '/agents/me', label: 'Agent Profiles', agentLabel: 'My Profile', icon: Users, roles: ['admin', 'manager', 'qa', 'agent'] },
-  { path: '/data-center', label: 'Data Center', icon: Database, roles: ['admin', 'manager'] },
-  { path: '/hr', label: 'HR Dashboard', icon: ShieldAlert, roles: ['admin', 'hr_manager', 'qa'] },
-  { path: '/hr/agents', label: 'Agent Directory', icon: UserCircle, roles: ['admin', 'hr_manager'] },
-  { path: '/system-health', label: 'System Health', icon: Activity, roles: ['admin'] },
+interface NavItemConfig {
+  path: string;
+  label: string;
+  agentLabel?: string;
+  icon: React.ElementType;
+  roles: UserRole[];
+  /** Use NavLink `end` so the root '/' doesn't match all child routes. */
+  end?: boolean;
+}
+
+const navItems: NavItemConfig[] = [
+  { path: '/',               label: 'Dashboard',      agentLabel: 'My Dashboard', icon: LayoutDashboard, roles: [UserRole.ADMIN, UserRole.QA, UserRole.AGENT, UserRole.HR_MANAGER], end: true },
+  { path: '/campaigns',      label: 'Campaigns',                                  icon: Radio,            roles: [UserRole.ADMIN, UserRole.QA, UserRole.HR_MANAGER] },
+  { path: '/calls',          label: 'Call Explorer',  agentLabel: 'My Calls',     icon: Phone,            roles: [UserRole.ADMIN, UserRole.QA, UserRole.AGENT, UserRole.HR_MANAGER] },
+  { path: '/intelligence',   label: 'BI Hub',                                     icon: BarChart3,         roles: [UserRole.ADMIN, UserRole.HR_MANAGER] },
+  { path: '/success-library',label: 'Success Library',                            icon: Star,             roles: [UserRole.ADMIN, UserRole.QA, UserRole.AGENT, UserRole.HR_MANAGER] },
+  { path: '/agents/me',      label: 'Agent Profiles', agentLabel: 'My Profile',   icon: Users,            roles: [UserRole.ADMIN, UserRole.QA, UserRole.AGENT, UserRole.HR_MANAGER] },
+  { path: '/data-center',    label: 'Data Center',                                icon: Database,          roles: [UserRole.ADMIN, UserRole.HR_MANAGER, UserRole.QA] },
+  { path: '/hr',             label: 'HR Dashboard',                               icon: ShieldAlert,       roles: [UserRole.ADMIN, UserRole.HR_MANAGER, UserRole.QA] },
+  { path: '/hr/agents',      label: 'Agent Directory',                            icon: UserCircle,        roles: [UserRole.ADMIN, UserRole.HR_MANAGER] },
+  { path: '/system-health',  label: 'System Health',                              icon: Activity,          roles: [UserRole.ADMIN] },
 ];
-
-const roleColors = {
-  admin: 'from-violet-500 to-indigo-500',
-  manager: 'from-cyan-500 to-blue-500',
-  qa: 'from-emerald-500 to-teal-500',
-  agent: 'from-amber-500 to-orange-500',
-  hr_manager: 'from-fuchsia-500 to-pink-500',
-};
-
-const roleLabels = {
-  admin: 'Administrator',
-  manager: 'Manager',
-  qa: 'QA Analyst',
-  agent: 'Agent',
-  hr_manager: 'HR Manager',
-};
 
 export function Sidebar() {
   const { userRole, currentUser, sidebarCollapsed, setSidebarCollapsed, piiMaskingEnabled, setPiiMaskingEnabled } = useApp();
-  const location = useLocation();
+
+  const handleLogout = () => {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('user');
+    window.location.href = '/login';
+  };
 
   const visibleItems = navItems.filter(item => item.roles.includes(userRole));
+  const gradientClass = ROLE_GRADIENT_COLORS[userRole] ?? 'from-slate-500 to-slate-700';
 
   return (
     <aside
@@ -64,33 +66,40 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 py-4 px-2 space-y-0.5 overflow-y-auto">
-        {visibleItems.map((item) => {
-          const isActive = location.pathname === item.path ||
-            (item.path !== '/' && location.pathname.startsWith(item.path.split('/')[1] ? `/${item.path.split('/')[1]}` : item.path));
-          return (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              className={cn(
-                'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150 group',
-                sidebarCollapsed && 'justify-center px-0',
-                isActive
-                  ? 'bg-primary/15 text-primary border border-primary/20'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
-              )}
-            >
-              <item.icon size={18} className={cn('flex-shrink-0', isActive ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground')} />
-              {!sidebarCollapsed && (
-                <span className="text-sm">
-                  {userRole === 'agent' && (item as any).agentLabel ? (item as any).agentLabel : item.label}
-                </span>
-              )}
-            </NavLink>
-          );
-        })}
+        {visibleItems.map((item) => (
+          <NavLink
+            key={item.path}
+            to={item.path}
+            end={item.end}
+            className={({ isActive }) => cn(
+              'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150 group',
+              sidebarCollapsed && 'justify-center px-0',
+              isActive
+                ? 'bg-primary/15 text-primary border border-primary/20'
+                : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
+            )}
+          >
+            {({ isActive }) => (
+              <>
+                <item.icon
+                  size={18}
+                  className={cn(
+                    'flex-shrink-0',
+                    isActive ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
+                  )}
+                />
+                {!sidebarCollapsed && (
+                  <span className="text-sm">
+                    {userRole === UserRole.AGENT && item.agentLabel ? item.agentLabel : item.label}
+                  </span>
+                )}
+              </>
+            )}
+          </NavLink>
+        ))}
 
         {/* Admin-only section divider */}
-        {!sidebarCollapsed && userRole === 'admin' && (
+        {!sidebarCollapsed && userRole === UserRole.ADMIN && (
           <div className="pt-3 pb-1">
             <p className="px-3 text-xs text-muted-foreground uppercase tracking-wider">Admin Only</p>
           </div>
@@ -128,19 +137,33 @@ export function Sidebar() {
       {/* User Profile */}
       <div className={cn('px-3 py-3 border-t border-border', sidebarCollapsed && 'flex flex-col items-center gap-2')}>
         {!sidebarCollapsed ? (
-          <div className="flex items-center gap-3">
-            <div className={cn('size-8 rounded-full bg-gradient-to-br flex items-center justify-center text-white text-xs font-semibold flex-shrink-0', roleColors[userRole])}>
-              {currentUser.avatar}
+          <div className="flex items-center justify-between w-full">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className={cn('size-8 rounded-full bg-gradient-to-br flex items-center justify-center text-white text-xs font-semibold flex-shrink-0', gradientClass)}>
+                {currentUser?.avatar || (currentUser?.name ? currentUser.name.substring(0, 2).toUpperCase() : '')}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-foreground text-xs font-medium truncate">{currentUser?.name}</p>
+                <p className="text-muted-foreground text-xs truncate">{ROLE_LABELS[userRole]}</p>
+              </div>
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-foreground text-xs font-medium truncate">{currentUser.name}</p>
-              <p className="text-muted-foreground text-xs truncate">{roleLabels[userRole]}</p>
-            </div>
+            <button
+              onClick={handleLogout}
+              title="Log Out"
+              className="text-muted-foreground hover:text-red-400 p-1.5 rounded-lg hover:bg-secondary transition-all flex-shrink-0"
+            >
+              <LogOut size={14} />
+            </button>
           </div>
         ) : (
-          <div className={cn('size-8 rounded-full bg-gradient-to-br flex items-center justify-center text-white text-xs font-semibold', roleColors[userRole])}>
-            {currentUser.avatar}
-          </div>
+          <button
+            onClick={handleLogout}
+            title="Log Out"
+            className={cn('size-8 rounded-full bg-gradient-to-br flex items-center justify-center text-white text-xs font-semibold group relative', gradientClass)}
+          >
+            <span className="group-hover:hidden">{currentUser?.avatar || (currentUser?.name ? currentUser.name.substring(0, 2).toUpperCase() : '')}</span>
+            <LogOut size={14} className="hidden group-hover:block text-white absolute" />
+          </button>
         )}
 
         {/* Collapse toggle */}

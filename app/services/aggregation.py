@@ -1,9 +1,10 @@
 import json
+from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from app.models import Call, CallStatus
 from app.schemas import CommonError
-from typing import List
+from typing import List, Optional
 
 def get_common_weaknesses(db: Session, limit: int = 10) -> List[CommonError]:
     """
@@ -135,3 +136,87 @@ def update_agent_mastery_stats(db: Session, employee_id: int):
             setattr(stats, key, value)
     
     db.commit()
+
+
+def calculate_core_kpis(
+    db: Session,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+    employee_id: Optional[int] = None
+) -> dict:
+    """
+    Calculates the core KPIs for the dashboard and system routers in a centralized place.
+    Supports optional date range filtering and agent-scoping (by employee_id).
+    """
+    # 1. Total calls query (All time evaluated)
+    total_calls_query = db.query(func.count(Call.id)).filter(Call.status == CallStatus.EVALUATED)
+    
+    # 2. Avg QA Score query
+    avg_score_query = db.query(func.avg(func.coalesce(Call.overridden_score, Call.evaluation_score))).filter(
+        Call.status == CallStatus.EVALUATED
+    )
+
+    # 3. Queue Depth / Processing counts
+    pending_query = db.query(func.count(Call.id)).filter(Call.status == CallStatus.PENDING)
+    processing_query = db.query(func.count(Call.id)).filter(Call.status == CallStatus.PROCESSING)
+
+    # 4. Pass Rate queries
+    passed_query = db.query(func.count(Call.id)).filter(
+        Call.status == CallStatus.EVALUATED,
+        func.coalesce(Call.overridden_score, Call.evaluation_score) >= 70
+    )
+
+    # 5. Calls today
+    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_query = db.query(func.count(Call.id))
+
+    # Apply agent-scoping
+    if employee_id is not None:
+        total_calls_query = total_calls_query.filter(Call.employee_id == employee_id)
+        avg_score_query = avg_score_query.filter(Call.employee_id == employee_id)
+        pending_query = pending_query.filter(Call.employee_id == employee_id)
+        processing_query = processing_query.filter(Call.employee_id == employee_id)
+        passed_query = passed_query.filter(Call.employee_id == employee_id)
+        today_query = today_query.filter(Call.employee_id == employee_id)
+
+    # Apply date filters
+    if date_from:
+        total_calls_query = total_calls_query.filter(Call.created_at >= date_from)
+        avg_score_query = avg_score_query.filter(Call.created_at >= date_from)
+        pending_query = pending_query.filter(Call.created_at >= date_from)
+        processing_query = processing_query.filter(Call.created_at >= date_from)
+        passed_query = passed_query.filter(Call.created_at >= date_from)
+        
+    if date_to:
+        total_calls_query = total_calls_query.filter(Call.created_at <= date_to)
+        avg_score_query = avg_score_query.filter(Call.created_at <= date_to)
+        pending_query = pending_query.filter(Call.created_at <= date_to)
+        processing_query = processing_query.filter(Call.created_at <= date_to)
+        passed_query = passed_query.filter(Call.created_at <= date_to)
+
+    # Today's start logic with date_from/date_to override
+    start_date = max(today_start, date_from) if date_from else today_start
+    today_query = today_query.filter(Call.created_at >= start_date)
+    if date_to:
+        today_query = today_query.filter(Call.created_at <= date_to)
+
+    # Execute queries
+    total_calls = total_calls_query.scalar() or 0
+    avg_score = avg_score_query.scalar() or 0.0
+    pending_count = pending_query.scalar() or 0
+    processing_count = processing_query.scalar() or 0
+    passed_calls = passed_query.scalar() or 0
+    total_calls_today = today_query.scalar() or 0
+
+    total_evaluated = total_calls
+    pass_rate = (passed_calls / total_evaluated * 100) if total_evaluated > 0 else 0.0
+
+    return {
+        "total_calls_today": total_calls_today,
+        "total_calls": total_calls,
+        "avg_qa_score": round(avg_score, 1),
+        "queue_depth": pending_count + processing_count,
+        "pending_count": pending_count,
+        "processing_count": processing_count,
+        "pass_rate": round(pass_rate, 1)
+    }

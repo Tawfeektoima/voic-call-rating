@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.models import (
     Call, Employee, Campaign, CallOutcome,
-    AgentMasteryStats, CallStatus,
+    AgentMasteryStats, CallStatus, UserRole,
 )
 
 
@@ -170,13 +170,25 @@ class ExportService:
     ]
 
     @classmethod
-    def build_dataset(cls, db: Session, campaign_id: Optional[int] = None):
+    def build_dataset(
+        cls,
+        db: Session,
+        campaign_id: Optional[int] = None,
+        department: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        agent_role: Optional[UserRole] = None,
+        current_user_role: Optional[UserRole] = None,
+        offset: int = 0,
+        limit: int = 5000,
+    ):
         """
         Multi-table join + JSON flatten + Feature Engineering → Master Dataset & RAG Tables.
         """
         # --- 1. Query with eager joins ---
         query = (
             db.query(Call)
+            .join(Employee)
             .options(
                 joinedload(Call.employee).joinedload(Employee.mastery_stats),
                 joinedload(Call.campaign),
@@ -189,8 +201,16 @@ class ExportService:
 
         if campaign_id:
             query = query.filter(Call.campaign_id == campaign_id)
+        if department:
+            query = query.filter(Employee.department == department)
+        if agent_role:
+            query = query.filter(Employee.role == agent_role)
+        if start_date:
+            query = query.filter(Call.created_at >= start_date)
+        if end_date:
+            query = query.filter(Call.created_at <= end_date)
 
-        calls: List[Call] = query.order_by(Call.id).all()
+        calls: List[Call] = query.order_by(Call.id).offset(offset).limit(limit).all()
 
         rows = []
         qa_rows = []
@@ -291,11 +311,17 @@ class ExportService:
             rows.append(row)
 
             # RAG QA Pairs
+            from app.routers.export import redact_text
             for pair in call.qa_pairs:
+                objection = pair.objection
+                response = pair.response
+                if current_user_role != UserRole.ADMIN:
+                    objection = redact_text(objection)
+                    response = redact_text(response)
                 qa_rows.append({
                     "call_id": call.id,
-                    "objection": pair.objection,
-                    "response": pair.response,
+                    "objection": objection,
+                    "response": response,
                     "emotion_at": pair.customer_emotion_at,
                     "emotion_after": pair.customer_emotion_after,
                     "is_golden": pair.is_golden_response
@@ -303,11 +329,14 @@ class ExportService:
 
             # Annotations
             for ann in call.annotations:
+                note = ann.note
+                if current_user_role != UserRole.ADMIN:
+                    note = redact_text(note)
                 annotation_rows.append({
                     "call_id": call.id,
                     "timestamp_sec": ann.timestamp,
                     "timestamp_fmt": _seconds_to_mmss(ann.timestamp),
-                    "note": ann.note,
+                    "note": note,
                     "tag": ann.tag
                 })
 

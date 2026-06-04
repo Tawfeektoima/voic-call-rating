@@ -25,10 +25,12 @@ from app.security import get_password_hash
 
 router = APIRouter(prefix="/api/hr", tags=["HR Violations"])
 
-HR_ROLES = [UserRole.ADMIN, UserRole.HR_MANAGER, UserRole.QA]  # Assuming QA also might have some visibility or we just use admin/hr_manager. User spec says: "admin", "manager", "hr_manager". We don't have "MANAGER" in enum, so we'll use ADMIN and HR_MANAGER.
+HR_ROLES = [UserRole.ADMIN, UserRole.HR_MANAGER, UserRole.QA]
 
 @router.get("/violations/summary", response_model=List[ViolationSummaryRow])
 def get_violations_summary(
+    limit: int = Query(50, ge=1, le=500, description="Maximum agents to return"),
+    offset: int = Query(0, ge=0, description="Result offset"),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
@@ -57,7 +59,7 @@ def get_violations_summary(
     )
 
     results = []
-    for row in summary_query:
+    for row in summary_query[offset:offset + limit]:
         results.append(ViolationSummaryRow(
             employee_id=row.employee_id,
             employee_name=row.employee_name,
@@ -74,6 +76,8 @@ def get_violations_summary(
 
 @router.get("/violations/pending", response_model=List[PendingViolationOut])
 def get_pending_hr_violations(
+    limit: int = Query(50, ge=1, le=500, description="Maximum violations to return"),
+    offset: int = Query(0, ge=0, description="Result offset"),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
@@ -93,7 +97,7 @@ def get_pending_hr_violations(
     )
 
     results = []
-    for v, emp in violations:
+    for v, emp in violations[offset:offset + limit]:
         results.append(PendingViolationOut(
             violation_id=v.id,
             employee_id=v.employee_id,
@@ -152,7 +156,7 @@ def get_violation_stats(
 
 @router.get("/violations/trends")
 def get_violation_trends(
-    days: int = 7,
+    days: int = Query(7, ge=1, le=90, description="Number of days to include"),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
@@ -195,8 +199,8 @@ def get_violation_trends(
 def get_agent_violations(
     employee_id: int,
     severity: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=200, description="Maximum violations to return"),
+    offset: int = Query(0, ge=0, description="Result offset"),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
@@ -234,6 +238,8 @@ def get_agent_violations(
 
 @router.get("/alarms/pending")
 def get_pending_qa_alarms(
+    limit: int = Query(50, ge=1, le=500, description="Maximum alarms to return"),
+    offset: int = Query(0, ge=0, description="Result offset"),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
@@ -255,7 +261,7 @@ def get_pending_qa_alarms(
     )
 
     results = []
-    for call, emp in calls:
+    for call, emp in calls[offset:offset + limit]:
         results.append({
             "call_id": call.id,
             "employee_id": call.employee_id,
@@ -615,4 +621,3 @@ def import_bulk_agents(
         success_count=len(success_list),
         failed_count=len(failed_list)
     )
-

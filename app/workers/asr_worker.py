@@ -5,9 +5,10 @@ import warnings
 from typing import Optional
 from app.workers.rag_worker import get_agent_suggestion
 from app.database import SessionLocal
-from app.models import LiveTranscriptSegment
+from app.models import LiveTranscriptSegment, SystemLog
 import redis
 import os
+from app.config import get_settings
 
 # Suppress warnings in the worker process
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -22,7 +23,8 @@ gpu_semaphore = asyncio.Semaphore(2)  # Max 2 concurrent transcriptions (RTX 305
 
 # C-5: Dynamic GPU Session Routing
 # Connect to Redis for heartbeats and load tracking
-redis_hb = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+settings = get_settings()
+redis_hb = redis.from_url(settings.REDIS_URL, decode_responses=True)
 MY_GPU_ID = int(os.getenv("GPU_ID", 0))
 
 async def publish_gpu_heartbeat(active_count: int):
@@ -166,6 +168,18 @@ class SessionASRBuffer:
                     db.commit()
                 except Exception as db_err:
                     print(f"[ASR DB Error] {str(db_err)}")
+                    try:
+                        db_log = SessionLocal()
+                        log_entry = SystemLog(
+                            error_type="processing_failure",
+                            error_message=f"ASR DB persistence failed for session {self.session_id}: {str(db_err)}",
+                            severity="warning"
+                        )
+                        db_log.add(log_entry)
+                        db_log.commit()
+                        db_log.close()
+                    except Exception as log_err:
+                        print(f"[ASR Logging Error] Failed to write SystemLog: {log_err}")
                 finally:
                     db.close()
 
@@ -185,3 +199,15 @@ class SessionASRBuffer:
                 
             except Exception as e:
                 print(f"[ASR Error {self.session_id}] During transcription: {str(e)}")
+                try:
+                    db_log = SessionLocal()
+                    log_entry = SystemLog(
+                        error_type="processing_failure",
+                        error_message=f"ASR transcription failed for session {self.session_id}: {str(e)}",
+                        severity="critical"
+                    )
+                    db_log.add(log_entry)
+                    db_log.commit()
+                    db_log.close()
+                except Exception as log_err:
+                    print(f"[ASR Logging Error] Failed to write SystemLog: {log_err}")

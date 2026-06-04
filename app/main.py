@@ -60,9 +60,6 @@ active_sessions_metric = Gauge(
     "Total number of active live sessions"
 )
 
-# Create database tables automatically
-Base.metadata.create_all(bind=engine)
-
 async def redis_listener():
     settings = get_settings()
     r = aioredis.from_url(settings.CELERY_BROKER_URL)
@@ -103,6 +100,8 @@ async def configure_redis_limits():
 async def lifespan(app: FastAPI):
     # Startup checks (TASK-C05)
     settings = get_settings()
+    if settings.ENVIRONMENT.lower() != "production":
+        Base.metadata.create_all(bind=engine)
     if settings.DATABASE_URL.startswith("sqlite"):
         print("=" * 60)
         print("⚠️  WARNING: Running with SQLite database.")

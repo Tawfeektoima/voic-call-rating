@@ -185,6 +185,13 @@ export function SystemHealth() {
               </div>
               <p className="text-xs text-muted-foreground text-center">Queue Depth</p>
             </div>
+            <div className="flex flex-col items-center gap-2">
+              <div className="size-[90px] rounded-full border-4 border-emerald-500/30 flex flex-col items-center justify-center">
+                <span className="text-foreground text-base font-bold">{metrics.pipeline_latency ?? 0}</span>
+                <span className="text-muted-foreground text-xs">sec</span>
+              </div>
+              <p className="text-xs text-muted-foreground text-center">Pipeline Latency</p>
+            </div>
           </div>
         )}
 
@@ -267,20 +274,20 @@ export function SystemHealth() {
       <div className="bg-card border border-border rounded-2xl p-5">
         <h3 className="text-foreground text-sm font-semibold mb-4">Service Status</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[
+          {(metrics?.services || [
             { name: 'FastAPI Backend', status: 'operational', latency: '12ms' },
-            { name: 'Groq Inference', status: 'operational', latency: `${metrics?.inference_time || 0}ms` },
-            { name: 'PostgreSQL', status: 'operational', latency: '4ms' },
+            { name: 'Database', status: 'operational', latency: '4ms' },
             { name: 'Redis Queue', status: 'operational', latency: '2ms' },
             { name: 'Celery Workers', status: 'operational', latency: '—' },
-            { name: 'PII Redaction', status: 'operational', latency: '8ms' },
-            { name: 'Export Pipeline', status: 'operational', latency: '120ms' },
-            { name: 'WebSocket Stream', status: 'operational', latency: '18ms' },
-          ].map(svc => (
+            { name: 'ASR Worker', status: 'operational', latency: '—' },
+            { name: 'RAG Worker', status: 'operational', latency: '—' },
+            { name: 'Groq Inference', status: 'operational', latency: '—' },
+            { name: 'WebSocket Stream', status: 'operational', latency: '—' },
+          ]).map(svc => (
             <div key={svc.name} className="flex items-center gap-3 p-3 bg-secondary/50 rounded-xl">
               <span className={cn(
                 'size-2 rounded-full flex-shrink-0',
-                svc.status === 'operational' ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'
+                svc.status === 'operational' ? 'bg-emerald-400' : svc.status === 'degraded' ? 'bg-amber-400 animate-pulse' : 'bg-red-500 animate-pulse'
               )} />
               <div className="min-w-0">
                 <p className="text-xs text-foreground truncate">{svc.name}</p>

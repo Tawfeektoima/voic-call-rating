@@ -3,13 +3,15 @@ import { useNavigate } from 'react-router';
 import { Lock, Mail, Loader2, ChevronRight, Layout, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import axios from 'axios';
+import { useApp } from '../context/AppContext';
 
 export function Login() {
   const navigate = useNavigate();
+  const { setCurrentUser, setUserRole } = useApp();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
-    email: 'admin@voiceqa.ai',
-    password: 'password'
+    email: '',
+    password: ''
   });
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -21,17 +23,23 @@ export function Login() {
       
       const { access_token, user } = response.data;
       
+      const normalizedUser = {
+        ...user,
+        role: user.role.toLowerCase(),
+        account_status: user.account_status || user.status || 'active'
+      };
+      
       // Store in localStorage
       localStorage.setItem('access_token', access_token);
-      localStorage.setItem('user', JSON.stringify(user));
+      localStorage.setItem('user', JSON.stringify(normalizedUser));
+      
+      setCurrentUser(normalizedUser);
+      setUserRole(normalizedUser.role);
       
       toast.success(`Welcome back, ${user.name}!`);
       
       // Redirect to dashboard
       navigate('/');
-      
-      // Optional: Refresh the page to ensure all components get the new state
-      // window.location.reload(); 
     } catch (error: any) {
       console.error('Login failed:', error);
       const message = error.response?.data?.detail || 'Invalid email or password';
@@ -71,7 +79,7 @@ export function Login() {
                   required
                   value={formData.email}
                   onChange={e => setFormData({ ...formData, email: e.target.value })}
-                  placeholder="admin@voiceqa.ai"
+                  placeholder="you@example.com"
                   className="w-full bg-background/50 border border-border rounded-2xl pl-12 pr-4 py-3.5 text-foreground focus:outline-none focus:border-indigo-500/50 transition-all"
                 />
               </div>

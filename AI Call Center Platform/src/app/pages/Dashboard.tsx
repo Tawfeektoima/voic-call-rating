@@ -12,8 +12,10 @@ import { useApp } from '../context/AppContext';
 import { useDashboard } from '../hooks/useDashboard';
 import { useCalls } from '../hooks/useCalls';
 import { useLeads } from '../hooks/useLeads';
+import { useSystemMetrics } from '../hooks/useSystemHealth';
 import { cn } from '../components/ui/utils';
 import { Skeleton } from '../components/ui/skeleton';
+import { EmptyState } from '../components/ui/states';
 import { Call } from '../lib/types';
 
 const kpiColors: Record<string, { bg: string; icon: string }> = {
@@ -75,11 +77,12 @@ export function Dashboard() {
   const { userRole } = useApp();
   const navigate = useNavigate();
   const isAdmin = userRole === 'admin';
-  const isAdminOrManager = userRole === 'admin' || userRole === 'manager';
+  const canSeeQueueDepth = userRole === 'admin' || userRole === 'hr_manager' || userRole === 'qa';
 
   const { data: dashboard, isLoading: kpisLoading, dataUpdatedAt } = useDashboard();
   const { data: recentCalls, isLoading: callsLoading } = useCalls({ limit: 5 } as any);
   const { data: leads } = useLeads();
+  const { data: systemMetrics } = useSystemMetrics();
 
   // Fallback for safety
   const kpis = dashboard || {
@@ -112,14 +115,14 @@ export function Dashboard() {
             <KPICard label="Calls Today" value={kpis.total_calls_today.toString()} sub="Total since midnight" icon={Phone} color="indigo" />
             <KPICard label="Avg QA Score" value={`${kpis.avg_qa_score}`} sub="Out of 100 pts" icon={Target} color="emerald" />
             <KPICard label="Pass Rate" value={`${kpis.pass_rate}%`} sub="Score >= 70" icon={CheckCircle} color="violet" />
-            {isAdminOrManager ? (
+            {canSeeQueueDepth ? (
               <KPICard 
                 label="Queue Depth" 
                 value={kpis.queue_depth.toString()} 
                 sub="Pending/Processing" 
                 icon={Clock} 
                 color="amber" 
-                onClick={() => navigate('/system-health')}
+                onClick={isAdmin ? () => navigate('/system-health') : undefined}
               />
             ) : (
               <KPICard label="FCR Rate" value="--" sub="First call resolution" icon={TrendingUp} color="cyan" />
@@ -139,7 +142,7 @@ export function Dashboard() {
           sub="API Online" 
           icon={Activity} 
           color="blue" 
-          onClick={() => navigate('/system-health')}
+          onClick={isAdmin ? () => navigate('/system-health') : undefined}
         />
       </div>
 
@@ -204,7 +207,7 @@ export function Dashboard() {
         <div className="lg:col-span-2 bg-card border border-border rounded-xl overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-border">
             <h3 className="text-foreground text-sm font-semibold">Recent Completed Calls</h3>
-            <button onClick={() => navigate('/calls/call1')} className="text-xs text-primary hover:text-indigo-300 flex items-center gap-1">
+            <button onClick={() => navigate('/calls')} className="text-xs text-primary hover:text-indigo-300 flex items-center gap-1">
               View All <ChevronRight size={12} />
             </button>
           </div>
@@ -254,9 +257,12 @@ export function Dashboard() {
                 );
               })
             ) : (
-              <div className="px-5 py-8 text-center text-muted-foreground text-sm">
-                No recent calls found
-              </div>
+              <EmptyState
+                icon={Phone}
+                title="No recent calls"
+                description="Processed calls will appear here once available."
+                className="py-8"
+              />
             )}
           </div>
         </div>
@@ -295,7 +301,7 @@ export function Dashboard() {
           <div className="bg-card border border-border rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-foreground text-sm font-semibold">Active Alerts</h3>
-              <button onClick={() => navigate('/system-health')} className="text-xs text-primary">View All</button>
+              {isAdmin && <button onClick={() => navigate('/system-health')} className="text-xs text-primary">View All</button>}
             </div>
             <div className="space-y-2 text-center py-4">
               <p className="text-muted-foreground text-xs">All systems operational</p>
@@ -311,10 +317,10 @@ export function Dashboard() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 {[
-                  { label: 'Latency', value: '847ms', color: 'indigo' },
-                  { label: 'GPU Load', value: '73%', color: 'cyan' },
-                  { label: 'CPU Load', value: '58%', color: 'violet' },
-                  { label: 'Active', value: '14', color: 'amber' },
+                  { label: 'Latency',  value: systemMetrics ? `${Math.round(systemMetrics.inference_time)}ms` : '—' },
+                  { label: 'GPU Load', value: systemMetrics ? `${Math.round(systemMetrics.gpu_load)}%`      : '—' },
+                  { label: 'CPU Load', value: systemMetrics ? `${Math.round(systemMetrics.cpu_load)}%`      : '—' },
+                  { label: 'Queue',    value: systemMetrics ? `${systemMetrics.queue_depth}`               : '—' },
                 ].map(m => (
                   <div key={m.label} className="bg-secondary/50 rounded-lg p-2.5">
                     <p className="text-foreground text-sm font-semibold">{m.value}</p>

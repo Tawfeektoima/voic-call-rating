@@ -1,25 +1,35 @@
-import { Outlet, useLocation } from 'react-router';
+import { Outlet, useLocation, Navigate } from 'react-router';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
+import { useApp } from '../../context/AppContext';
 
 const pageTitles: Record<string, string> = {
-  '/': 'Operations Dashboard',
-  '/campaigns': 'Campaign Management',
-  '/intelligence': 'Business Intelligence Hub',
-  '/success-library': 'Success Library',
-  '/data-center': 'Data Center & Exports',
-  '/system-health': 'System Health Monitor',
+  '/':               'Operations Dashboard',
+  '/campaigns':      'Campaign Management',
+  '/calls':          'Call Explorer',
+  '/intelligence':   'Business Intelligence Hub',
+  '/success-library':'Success Library',
+  '/data-center':    'Data Center & Exports',
+  '/system-health':  'System Health Monitor',
+  '/hr':             'HR Dashboard',
+  '/hr/agents':      'Agent Directory',
 };
 
 function getTitle(pathname: string): string {
-  if (pathname.startsWith('/calls/')) return 'Call Analysis Engine';
+  if (pageTitles[pathname]) return pageTitles[pathname];
+  if (pathname.startsWith('/calls/'))  return 'Call Analysis Engine';
   if (pathname.startsWith('/agents/')) return 'Agent Momentum Profile';
-  return pageTitles[pathname] || 'VoiceQA Enterprise';
+  return 'VoiceQA Enterprise';
 }
 
 export function Layout() {
   const location = useLocation();
   const title = getTitle(location.pathname);
+  const { currentUser } = useApp();
+
+  if (!currentUser) {
+    return <Navigate to="/login" replace />;
+  }
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">

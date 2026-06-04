@@ -1,18 +1,13 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { UserRole } from '../lib/types';
-
-interface CurrentUser {
-  id: number;
-  name: string;
-  email: string;
-  role: UserRole;
-  avatar: string;
-}
+import { UserRole, CurrentUser } from '../lib/types';
+import { getCurrentUser } from '../lib/api';
+import { Loader2 } from 'lucide-react';
 
 interface AppContextType {
   userRole: UserRole;
   setUserRole: (role: UserRole) => void;
-  currentUser: CurrentUser;
+  currentUser: CurrentUser | null;
+  setCurrentUser: (user: CurrentUser | null) => void;
   piiMaskingEnabled: boolean;
   setPiiMaskingEnabled: (v: boolean) => void;
   sidebarCollapsed: boolean;
@@ -21,36 +16,76 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | null>(null);
 
-// Fallback user for demo purposes when no real session is active
-const fallbackUser = {
-  id: 1,
-  name: 'Demo Admin',
-  email: 'admin@voiceqa.ai',
-  role: UserRole.ADMIN,
-  avatar: 'AD'
-};
-
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [userRole, setUserRole] = useState<UserRole>(UserRole.ADMIN);
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [userRole, setUserRoleState] = useState<UserRole>(UserRole.AGENT);
   const [piiMaskingEnabled, setPiiMaskingEnabled] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     document.documentElement.classList.add('dark');
+
+    const bootstrapSession = async () => {
+      const token = localStorage.getItem('access_token');
+      if (!token) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const data = await getCurrentUser();
+        const normalizedRole = (data.role ? data.role.toLowerCase() : 'agent') as UserRole;
+        const normalizedUser: CurrentUser = {
+          id: data.id,
+          name: data.name,
+          email: data.email || '',
+          role: normalizedRole,
+          avatar: data.avatar || '',
+          account_status: data.account_status || data.status || 'active',
+        };
+        setCurrentUser(normalizedUser);
+        setUserRoleState(normalizedRole);
+        localStorage.setItem('user', JSON.stringify(normalizedUser));
+      } catch (error) {
+        console.error('Session bootstrap failed:', error);
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('user');
+        setCurrentUser(null);
+        setUserRoleState(UserRole.AGENT);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    bootstrapSession();
   }, []);
 
-  // In a real app, this would be fetched from /api/auth/me or similar
-  const currentUser: CurrentUser = {
-    ...fallbackUser,
-    role: userRole,
-    avatar: userRole.substring(0, 2).toUpperCase()
+  const setUserRole = (role: UserRole) => {
+    const normalizedRole = role.toLowerCase() as UserRole;
+    setUserRoleState(normalizedRole);
+    if (currentUser) {
+      const updated = { ...currentUser, role: normalizedRole };
+      setCurrentUser(updated);
+      localStorage.setItem('user', JSON.stringify(updated));
+    }
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4 text-center p-4">
+        <Loader2 className="animate-spin text-primary size-10" />
+        <p className="text-muted-foreground text-sm font-medium animate-pulse">Initializing Secure Session...</p>
+      </div>
+    );
+  }
 
   return (
     <AppContext.Provider value={{
       userRole,
       setUserRole,
       currentUser,
+      setCurrentUser,
       piiMaskingEnabled,
       setPiiMaskingEnabled,
       sidebarCollapsed,

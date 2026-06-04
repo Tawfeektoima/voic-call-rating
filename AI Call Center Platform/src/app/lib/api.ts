@@ -5,7 +5,10 @@ import {
   Call, 
   CallUploadResponse, 
   EmployeeRanking, 
-  CommonError 
+  CommonError,
+  CurrentUser,
+  SystemMetrics,
+  SystemAlert
 } from './types';
 
 // Create a centralized Axios instance
@@ -32,7 +35,10 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
-    if (error.response?.status === 401) {
+    const responseStatus = error.response?.status;
+    const detail = (error.response?.data as any)?.detail;
+
+    if (responseStatus === 401 || (responseStatus === 403 && typeof detail === 'string' && detail.toLowerCase().includes('account is'))) {
       console.warn('Unauthorized - Clearing session and redirecting to login');
       localStorage.removeItem('access_token');
       localStorage.removeItem('user');
@@ -54,6 +60,24 @@ export const getEmployees = async (): Promise<Agent[]> => {
   const response = await api.get<Agent[]>('/api/admin/employees');
   return response.data;
 };
+
+export const getEmployeesPaginated = async (params: {
+  skip?: number;
+  limit?: number;
+  role?: string;
+  status?: string;
+  search?: string;
+}): Promise<{ items: Agent[]; total: number }> => {
+  const response = await api.get<Agent[]>('/api/admin/employees', { params });
+  const total = parseInt(response.headers['x-total-count'] || '0', 10);
+  return { items: response.data, total };
+};
+
+export const updateEmployee = async (id: number, data: { role?: string; status?: string }): Promise<Agent> => {
+  const response = await api.put<Agent>(`/api/admin/employees/${id}`, data);
+  return response.data;
+};
+
 
 export const getCampaigns = async (): Promise<Campaign[]> => {
   const response = await api.get<Campaign[]>('/api/admin/campaigns');
@@ -173,6 +197,11 @@ export const getSystemAlerts = async (): Promise<SystemAlert[]> => {
 
 export const resolveAlert = async (id: number): Promise<SystemAlert> => {
   const response = await api.patch<SystemAlert>(`/api/system/alerts/${id}/resolve`);
+  return response.data;
+};
+
+export const getCurrentUser = async (): Promise<CurrentUser> => {
+  const response = await api.get<CurrentUser>('/api/auth/me');
   return response.data;
 };
 

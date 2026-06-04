@@ -7,7 +7,7 @@ import psutil
 from celery import Celery
 from datetime import datetime, timezone
 from app.database import SessionLocal
-from app.models import Call, Campaign, CallStatus, SystemLog, CallOutcome, Employee, CallQAPair, GoldenPairCandidate, CandidateStatus
+from app.models import Call, Campaign, CallStatus, SystemLog, CallOutcome, Employee, CallQAPair, GoldenPairCandidate, CandidateStatus, AgentViolation
 from app.services.transcription import transcriber
 import logging
 
@@ -121,6 +121,17 @@ def print_worker_vram(stage: str):
         print(f"   ├─ PyTorch Reserved : {reserved:.2f} GB")
         print(f"   └─ System Free VRAM : {free_mem/(1024**3):.2f} / {total_mem/(1024**3):.2f} GB\n")
 
+def _cleanup_partial_evaluation_records(db, call_id: int):
+    """Remove partial child records from a failed or interrupted evaluation."""
+    db.query(AgentViolation).filter(AgentViolation.call_id == call_id).delete(synchronize_session=False)
+    db.query(CallQAPair).filter(CallQAPair.call_id == call_id).delete(synchronize_session=False)
+    db.query(GoldenPairCandidate).filter(GoldenPairCandidate.call_id == call_id).delete(synchronize_session=False)
+
+
+def _has_completed_evaluation(db, call_id: int) -> bool:
+    return db.query(CallOutcome.id).filter(CallOutcome.call_id == call_id).first() is not None
+
+
 @celery_app.task(bind=True, name="process_call_audio")
 def process_call_audio_task(self, call_id: int):
     """
@@ -174,12 +185,22 @@ def process_call_audio_task(self, call_id: int):
             redis_client.publish("call_updates", json.dumps({"call_id": call_id, "status": CallStatus.FAILED.value}))
             return
 
+        if _has_completed_evaluation(db, call_id):
+            print(f"[*] Call {call_id} already has a completed evaluation. Skipping duplicate task run.")
+            call.status = CallStatus.EVALUATED
+            if call.processed_at is None:
+                call.processed_at = datetime.now(timezone.utc)
+            db.commit()
+            redis_client.publish("call_updates", json.dumps({"call_id": call_id, "status": CallStatus.EVALUATED.value}))
+            return
+
         # 1. Idempotency Check & Start Processing
         # FIX: Allow TRANSCRIBED calls to proceed to EVALUATION. Only skip if already EVALUATED or currently PROCESSING.
         if call.status == CallStatus.EVALUATED:
             print(f"[*] Call {call_id} is already EVALUATED. Skipping duplicate task.")
             return
 
+        _cleanup_partial_evaluation_records(db, call_id)
         call.status = CallStatus.PROCESSING
         db.commit()
         redis_client.publish("call_updates", json.dumps({"call_id": call_id, "status": CallStatus.PROCESSING.value}))
@@ -667,7 +688,17 @@ def evaluate_live_call_task(call_id: int):
             print(f"[!] Live Eval: Call {call_id} not found.")
             return
 
+        if _has_completed_evaluation(db, call_id):
+            print(f"[*] Live call {call_id} already has a completed evaluation. Skipping duplicate task run.")
+            call.status = CallStatus.EVALUATED
+            if call.processed_at is None:
+                call.processed_at = datetime.now(timezone.utc)
+            db.commit()
+            redis_client.publish("call_updates", json.dumps({"call_id": call_id, "status": CallStatus.EVALUATED.value}))
+            return
+
         # 1. Start Processing
+        _cleanup_partial_evaluation_records(db, call_id)
         call.status = CallStatus.PROCESSING
         db.commit()
         redis_client.publish("call_updates", json.dumps({"call_id": call_id, "status": CallStatus.PROCESSING.value}))

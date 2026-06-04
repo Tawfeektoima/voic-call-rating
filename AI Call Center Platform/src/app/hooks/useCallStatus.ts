@@ -11,7 +11,9 @@ export const useCallStatus = (callId: number | null) => {
 
     const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
     const wsBaseUrl = apiBaseUrl.replace(/^http/, 'ws');
-    const wsUrl = `${wsBaseUrl}/ws/calls/${callId}`;
+    const token = localStorage.getItem('access_token');
+    if (!token) return;
+    const wsUrl = `${wsBaseUrl}/ws/calls/${callId}?auth_token=${encodeURIComponent(token)}`;
     const socket = new WebSocket(wsUrl);
 
     socket.onmessage = (event) => {

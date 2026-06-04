@@ -2,9 +2,11 @@
 Application configuration loaded from environment variables.
 """
 
-from pydantic_settings import BaseSettings
-from pydantic import field_validator
 from functools import lru_cache
+from urllib.parse import quote, urlsplit
+
+from pydantic import field_validator, model_validator
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -33,8 +35,13 @@ class Settings(BaseSettings):
     ALLOWED_EXTENSIONS: str = ".wav,.mp3,.m4a,.ogg,.flac,.webm"
 
     # Redis & Celery
-    REDIS_URL: str = "redis://localhost:6379/0"
-    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    REDIS_DB: int = 0
+    REDIS_USERNAME: str = ""
+    REDIS_PASSWORD: str = ""
+    REDIS_URL: str = ""
+    CELERY_BROKER_URL: str = ""
 
     @field_validator("DATABASE_URL")
     @classmethod
@@ -68,6 +75,72 @@ class Settings(BaseSettings):
     @property
     def max_file_size_bytes(self) -> int:
         return self.MAX_FILE_SIZE_MB * 1024 * 1024
+
+    @property
+    def is_production(self) -> bool:
+        return self.ENVIRONMENT.lower() == "production"
+
+    @staticmethod
+    def _build_redis_url(
+        host: str,
+        port: int,
+        db: int,
+        username: str = "",
+        password: str = "",
+    ) -> str:
+        auth = ""
+        if username and password:
+            auth = f"{quote(username)}:{quote(password)}@"
+        elif password:
+            auth = f":{quote(password)}@"
+        elif username:
+            auth = f"{quote(username)}@"
+
+        return f"redis://{auth}{host}:{port}/{db}"
+
+    @staticmethod
+    def _redis_url_has_password(redis_url: str) -> bool:
+        parsed = urlsplit(redis_url)
+        return bool(parsed.password)
+
+    @model_validator(mode="after")
+    def normalize_redis_settings(self):
+        if not self.REDIS_URL.strip() and not self.CELERY_BROKER_URL.strip():
+            built_url = self._build_redis_url(
+                host=self.REDIS_HOST,
+                port=self.REDIS_PORT,
+                db=self.REDIS_DB,
+                username=self.REDIS_USERNAME,
+                password=self.REDIS_PASSWORD,
+            )
+            self.REDIS_URL = built_url
+            self.CELERY_BROKER_URL = built_url
+        elif self.REDIS_URL.strip() and not self.CELERY_BROKER_URL.strip():
+            self.CELERY_BROKER_URL = self.REDIS_URL
+        elif self.CELERY_BROKER_URL.strip() and not self.REDIS_URL.strip():
+            self.REDIS_URL = self.CELERY_BROKER_URL
+
+        if self.is_production:
+            if self.DATABASE_URL.startswith("sqlite"):
+                raise ValueError(
+                    "SQLite is not allowed in production. "
+                    "Set DATABASE_URL to a PostgreSQL connection string in your .env file. "
+                    "Example: postgresql://user:password@localhost:5432/call_rating"
+                )
+
+            redis_urls = {
+                "REDIS_URL": self.REDIS_URL,
+                "CELERY_BROKER_URL": self.CELERY_BROKER_URL,
+            }
+            for field_name, redis_url in redis_urls.items():
+                if not redis_url.strip():
+                    raise ValueError(f"{field_name} must be set in production.")
+                if not self._redis_url_has_password(redis_url):
+                    raise ValueError(
+                        f"{field_name} must include Redis authentication in production."
+                    )
+
+        return self
 
     class Config:
         env_file = ".env"

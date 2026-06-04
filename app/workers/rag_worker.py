@@ -1,10 +1,25 @@
 import os
 import json
 import asyncio
-import chromadb
-from sentence_transformers import SentenceTransformer
-import redis.asyncio as aioredis
 from typing import Optional, List
+from app.database import SessionLocal
+from app.models import SystemLog
+from app.config import get_settings
+
+try:
+    import chromadb
+except Exception:  # Optional dependency for lightweight test/CI environments
+    chromadb = None
+
+try:
+    from sentence_transformers import SentenceTransformer
+except Exception:  # Optional dependency for lightweight test/CI environments
+    SentenceTransformer = None
+
+try:
+    import redis.asyncio as aioredis
+except Exception:  # Optional dependency for lightweight test/CI environments
+    aioredis = None
 
 # ---------------------------------------------------------------------------
 # Local Resource Initialization
@@ -13,8 +28,12 @@ from typing import Optional, List
 # Local Vector DB: Persistent ChromaDB
 db_path = "./local_chroma_db"
 os.makedirs(db_path, exist_ok=True)
-chroma_client = chromadb.PersistentClient(path=db_path)
-collection = chroma_client.get_or_create_collection(name="agent_suggestions")
+if chromadb is not None:
+    chroma_client = chromadb.PersistentClient(path=db_path)
+    collection = chroma_client.get_or_create_collection(name="agent_suggestions")
+else:
+    chroma_client = None
+    collection = None
 
 # Local Embeddings: Lazy-loaded SentenceTransformers (all-MiniLM-L6-v2)
 # This model runs locally on CPU/GPU and provides high-quality 384d embeddings
@@ -23,28 +42,46 @@ _model = None
 def _get_model():
     """Lazy-load the embedding model on first use, not at import time."""
     global _model
-    if _model is None:
-        print("Loading local embedding model (all-MiniLM-L6-v2)...")
-        # Temporarily remove HF_TOKEN if it's expired — this is a PUBLIC model
-        # and an expired token causes 401 errors even on public repos
-        saved_token = os.environ.pop("HF_TOKEN", None)
-        saved_token2 = os.environ.pop("HUGGING_FACE_HUB_TOKEN", None)
+    if _model is not None:
+        return _model
+    if SentenceTransformer is None:
+        print("WARNING: sentence-transformers is unavailable. RAG suggestions will be disabled.")
+        return None
+
+    print("Loading local embedding model (all-MiniLM-L6-v2)...")
+    # Temporarily remove HF_TOKEN if it's expired — this is a PUBLIC model
+    # and an expired token causes 401 errors even on public repos
+    saved_token = os.environ.pop("HF_TOKEN", None)
+    saved_token2 = os.environ.pop("HUGGING_FACE_HUB_TOKEN", None)
+    try:
+        _model = SentenceTransformer("all-MiniLM-L6-v2", token=False)
+        print("Embedding model loaded successfully.")
+    except Exception as e:
+        print(f"WARNING: Failed to load embedding model: {e}")
+        print("RAG suggestions will be disabled.")
         try:
-            _model = SentenceTransformer('all-MiniLM-L6-v2', token=False)
-            print("Embedding model loaded successfully.")
-        except Exception as e:
-            print(f"WARNING: Failed to load embedding model: {e}")
-            print("RAG suggestions will be disabled.")
-        finally:
-            # Restore tokens for other services (pyannote, etc.)
-            if saved_token:
-                os.environ["HF_TOKEN"] = saved_token
-            if saved_token2:
-                os.environ["HUGGING_FACE_HUB_TOKEN"] = saved_token2
+            db_log = SessionLocal()
+            log_entry = SystemLog(
+                error_type="processing_failure",
+                error_message=f"RAG embedding model load failed: {str(e)}",
+                severity="warning"
+            )
+            db_log.add(log_entry)
+            db_log.commit()
+            db_log.close()
+        except Exception as log_err:
+            print(f"[RAG Logging Error] Failed to write SystemLog: {log_err}")
+    finally:
+        # Restore tokens for other services (pyannote, etc.)
+        if saved_token:
+            os.environ["HF_TOKEN"] = saved_token
+        if saved_token2:
+            os.environ["HUGGING_FACE_HUB_TOKEN"] = saved_token2
     return _model
 
 # Redis Cache for RAG Suggestions
-redis_client = aioredis.from_url("redis://localhost:6379", decode_responses=True)
+settings = get_settings()
+redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True) if aioredis is not None else None
 
 
 def get_company_trigger_keywords(company_id: int) -> List[str]:
@@ -77,6 +114,8 @@ async def get_agent_suggestion(
 
         # 2. Redis Embedding Cache (I-05: 1-hour TTL)
         # We cache the final suggestion for common phrases
+        if redis_client is None or collection is None:
+            return None
         cache_key = f"rag_cache:{campaign_id}:{text_lower[:50]}"
         cached_suggestion = await redis_client.get(cache_key)
         if cached_suggestion:
@@ -123,4 +162,16 @@ async def get_agent_suggestion(
 
     except Exception as e:
         print(f"[RAG Error {session_id}] {str(e)}")
+        try:
+            db_log = SessionLocal()
+            log_entry = SystemLog(
+                error_type="processing_failure",
+                error_message=f"RAG suggestion query failed for session {session_id}: {str(e)}",
+                severity="warning"
+            )
+            db_log.add(log_entry)
+            db_log.commit()
+            db_log.close()
+        except Exception as log_err:
+            print(f"[RAG Logging Error] Failed to write SystemLog: {log_err}")
         return None

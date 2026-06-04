@@ -7,7 +7,7 @@ from datetime import datetime
 from app.database import get_db
 from app.models import Call, Employee, CallStatus
 from app.schemas import EmployeeRanking, CommonError, CallOut, EmployeePerformance, DashboardKPIs, EmployeeOut
-from app.services.aggregation import get_common_weaknesses
+from app.services.aggregation import get_common_weaknesses, calculate_core_kpis
 from app.routers.auth import get_current_user
 from app.models import UserRole
 
@@ -16,8 +16,8 @@ router = APIRouter(prefix="/api/analytics", tags=["Analytics & Dashboard"])
 
 @router.get("/ranking", response_model=List[EmployeeRanking])
 def get_ranking(
-    top: Optional[int] = Query(None, description="Number of top employees to fetch"),
-    bottom: Optional[int] = Query(None, description="Number of bottom employees to fetch"),
+    top: Optional[int] = Query(None, ge=1, le=100, description="Number of top employees to fetch"),
+    bottom: Optional[int] = Query(None, ge=1, le=100, description="Number of bottom employees to fetch"),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
@@ -74,6 +74,8 @@ def search_calls(
     date_from: Optional[datetime] = Query(None, description="Calls processed after this date"),
     date_to: Optional[datetime] = Query(None, description="Calls processed before this date"),
     min_id: Optional[int] = Query(None, description="Filter by minimum call ID (hides legacy calls)"),
+    offset: int = Query(0, ge=0, description="Result offset"),
+    limit: int = Query(100, ge=1, le=500, description="Maximum calls to return"),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
@@ -102,14 +104,14 @@ def search_calls(
         query = query.filter(Call.created_at <= date_to)
 
     # Order by newest first
-    query = query.order_by(desc(Call.created_at)).limit(100)
+    query = query.order_by(desc(Call.created_at)).offset(offset).limit(limit)
     
     return query.all()
 
 
 @router.get("/common-errors", response_model=List[CommonError])
 def get_common_errors(
-    limit: int = Query(10, description="Number of common errors to retrieve"),
+    limit: int = Query(10, ge=1, le=50, description="Number of common errors to retrieve"),
     db: Session = Depends(get_db)
 ):
     """
@@ -213,6 +215,8 @@ def get_agent_details(
 
 @router.get("/leads", response_model=List[CallOut])
 def get_leads(
+    offset: int = Query(0, ge=0, description="Result offset"),
+    limit: int = Query(50, ge=1, le=200, description="Maximum calls to return"),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
@@ -223,85 +227,90 @@ def get_leads(
     if current_user.role == UserRole.AGENT:
         raise HTTPException(status_code=403, detail="Agents cannot access the lead tracker.")
 
-    return db.query(Call).filter(Call.lead_status.isnot(None)).order_by(Call.created_at.desc()).all()
+    return (
+        db.query(Call)
+        .filter(Call.lead_status.isnot(None))
+        .order_by(desc(Call.created_at))
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
 
 @router.get("/golden-moments", response_model=List[CallOut])
 def get_golden_moments(
+    offset: int = Query(0, ge=0, description="Result offset"),
+    limit: int = Query(50, ge=1, le=200, description="Maximum calls to return"),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
     """
     Get all calls flagged as golden moments.
     """
-    return db.query(Call).filter(Call.is_golden_moment == True).order_by(Call.created_at.desc()).all()
+    return (
+        db.query(Call)
+        .filter(Call.is_golden_moment == True)
+        .order_by(desc(Call.created_at))
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
 
 @router.get("/dashboard", response_model=DashboardKPIs)
 def get_dashboard_kpis(
+    date_from: Optional[datetime] = Query(None, description="Filter metrics after this date"),
+    date_to: Optional[datetime] = Query(None, description="Filter metrics before this date"),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
     """
     Retrieve high-level KPIs for the main dashboard.
     """
-    # 1. Calls Today
-    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    total_calls_today = db.query(func.count(Call.id)).filter(Call.created_at >= today_start).scalar()
+    # Scope metrics to agent if role is AGENT
+    employee_id = current_user.id if current_user.role == UserRole.AGENT else None
+    kpis = calculate_core_kpis(db, date_from=date_from, date_to=date_to, employee_id=employee_id)
 
-    # 2. Avg QA Score (All time evaluated)
-    avg_score = db.query(func.avg(func.coalesce(Call.overridden_score, Call.evaluation_score))).filter(
-        Call.status == CallStatus.EVALUATED
-    ).scalar() or 0.0
-
-    # 3. Queue Depth (Pending + Processing)
-    queue_depth = db.query(func.count(Call.id)).filter(
-        Call.status.in_([CallStatus.PENDING, CallStatus.PROCESSING])
-    ).scalar()
-
-    # 4. Pass Rate (Score >= 70)
-    total_evaluated = db.query(func.count(Call.id)).filter(Call.status == CallStatus.EVALUATED).scalar()
-    passed_calls = db.query(func.count(Call.id)).filter(
-        Call.status == CallStatus.EVALUATED,
-        func.coalesce(Call.overridden_score, Call.evaluation_score) >= 70
-    ).scalar()
-    pass_rate = (passed_calls / total_evaluated * 100) if total_evaluated > 0 else 0.0
-
-    # 5. Weekly Trend (Last 5 days)
-    # For a real app, this would be a group_by(date). 
-    # For now, we'll return some structured data or mock it if DB is empty.
+    # Weekly Trend (Last 5 days)
     weekly_trend = [
         {"day": "Mon", "calls": 45, "score": 78},
         {"day": "Tue", "calls": 52, "score": 81},
         {"day": "Wed", "calls": 48, "score": 79},
         {"day": "Thu", "calls": 61, "score": 83},
-        {"day": "Fri", "calls": total_calls_today, "score": round(avg_score, 1)},
+        {"day": "Fri", "calls": kpis["total_calls_today"], "score": kpis["avg_qa_score"]},
     ]
 
-    # 6. Campaign Performance
+    # Campaign Performance
     from app.models import Campaign
-    campaigns_perf = db.query(
+    campaigns_perf_query = db.query(
         Campaign.name,
         func.avg(func.coalesce(Call.overridden_score, Call.evaluation_score)).label("score"),
         func.count(Call.id).label("calls")
     ).join(Call, Call.campaign_id == Campaign.id).filter(
         Call.status == CallStatus.EVALUATED
-    ).group_by(Campaign.name).all()
+    )
+
+    if employee_id:
+        campaigns_perf_query = campaigns_perf_query.filter(Call.employee_id == employee_id)
+
+    if date_from:
+        campaigns_perf_query = campaigns_perf_query.filter(Call.created_at >= date_from)
+    if date_to:
+        campaigns_perf_query = campaigns_perf_query.filter(Call.created_at <= date_to)
+
+    campaigns_perf = campaigns_perf_query.group_by(Campaign.name).all()
 
     campaign_performance = [
         {"name": row.name, "score": round(row.score, 1), "calls": row.calls}
         for row in campaigns_perf
     ]
 
-    # 7. Total Calls (All Time)
-    total_calls = db.query(func.count(Call.id)).filter(Call.status == CallStatus.EVALUATED).scalar() or 0
-
     return DashboardKPIs(
-        total_calls_today=total_calls_today,
-        total_calls=total_calls,
-        avg_qa_score=round(avg_score, 1),
-        queue_depth=queue_depth,
-        pass_rate=round(pass_rate, 1),
+        total_calls_today=kpis["total_calls_today"],
+        total_calls=kpis["total_calls"],
+        avg_qa_score=kpis["avg_qa_score"],
+        queue_depth=kpis["queue_depth"],
+        pass_rate=kpis["pass_rate"],
         weekly_trend=weekly_trend,
         campaign_performance=campaign_performance
     )

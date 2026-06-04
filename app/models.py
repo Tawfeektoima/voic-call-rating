@@ -63,6 +63,13 @@ class UserRole(str, enum.Enum):
     HR_MANAGER = "HR_MANAGER"
 
 
+class EmployeeStatus(str, enum.Enum):
+    """Account states for the platform."""
+    ACTIVE    = "active"
+    DISABLED  = "disabled"
+    SUSPENDED = "suspended"
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -77,6 +84,9 @@ class EmployeeTier(str, enum.Enum):
 
 class Employee(Base):
     __tablename__ = "employees"
+    __table_args__ = (
+        Index("ix_employees_role_status", "role", "status"),
+    )
 
     id         = Column(Integer, primary_key=True, index=True)
     name       = Column(String(255), nullable=False)
@@ -84,9 +94,10 @@ class Employee(Base):
     department = Column(String(255), nullable=True)
     employee_code = Column(String(50), unique=True, nullable=False, index=True)
     hashed_password = Column(String(255), nullable=False)
-    role       = Column(SAEnum(UserRole), default=UserRole.AGENT, nullable=False)
+    role       = Column(SAEnum(UserRole), default=UserRole.AGENT, nullable=False, index=True)
     avatar     = Column(String(255), nullable=True) # URL or initials
     tier       = Column(SAEnum(EmployeeTier), default=EmployeeTier.BRONZE, nullable=False)
+    status     = Column(String(50), default="active", nullable=False, index=True)
     skills     = Column(JSON, nullable=True) # e.g. {"empathy": 80, "resolution": 75}
     phone_number = Column(String(50), nullable=True)
     emotion_history = Column(JSON, nullable=True) # e.g. [65, 70, 72, 68]
@@ -114,7 +125,7 @@ class Campaign(Base):
     kpis             = Column(JSON, nullable=True)  # List of strings or key-value pairs
     color            = Column(String(7), default="#6366f1", nullable=False) # Default indigo
     evaluation_prompt = Column(Text, nullable=False)
-    created_at       = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at       = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
     # Relationships
     calls = relationship("Call", back_populates="campaign", lazy="dynamic")
@@ -126,6 +137,12 @@ class Campaign(Base):
 
 class Call(Base):
     __tablename__ = "calls"
+    __table_args__ = (
+        Index("ix_calls_employee_created_at", "employee_id", "created_at"),
+        Index("ix_calls_campaign_created_at", "campaign_id", "created_at"),
+        Index("ix_calls_status_created_at", "status", "created_at"),
+        Index("ix_calls_lead_status_created_at", "lead_status", "created_at"),
+    )
 
     id               = Column(Integer, primary_key=True, index=True)
     employee_id      = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
@@ -182,7 +199,7 @@ class Call(Base):
     qa_alarm_evidence   = Column(Text, nullable=True)
 
     # Timestamps
-    created_at       = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at       = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
     processed_at     = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
@@ -251,6 +268,7 @@ class CallAnnotation(Base):
 
     id                    = Column(Integer, primary_key=True, index=True)
     call_id               = Column(Integer, ForeignKey("calls.id"), nullable=False, index=True)
+    supervisor_id         = Column(Integer, ForeignKey("employees.id"), nullable=False)
     timestamp             = Column(Float, nullable=False) # seconds into call
     note                  = Column(Text, nullable=False)
     tag                   = Column(String(50), nullable=True) # best_practice, mistake, etc.
@@ -384,6 +402,12 @@ class GoldenPairCandidate(Base):
 
 class AgentViolation(Base):
     __tablename__ = "agent_violations"
+    __table_args__ = (
+        Index("ix_agent_violations_employee_created_at", "employee_id", "created_at"),
+        Index("ix_agent_violations_violation_created_at", "violation_id", "created_at"),
+        Index("ix_agent_violations_severity_created_at", "severity", "created_at"),
+        Index("ix_agent_violations_hr_flagged_created_at", "hr_flagged", "created_at"),
+    )
 
     id                = Column(Integer, primary_key=True, index=True)
     employee_id       = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
@@ -391,20 +415,21 @@ class AgentViolation(Base):
     campaign_id       = Column(Integer, ForeignKey("campaigns.id"), nullable=False)
     violation_id      = Column(String(50), nullable=False, index=True)
     # e.g. "abusive_language", "dead_air", "skipped_offer"
-    severity          = Column(String(10), nullable=False)
+    severity          = Column(String(10), nullable=False, index=True)
     # "high" | "medium" | "low"
     occurrence        = Column(Integer, nullable=False)
     # 1 = first time, 2 = second, 3 = third+
     penalty_tier      = Column(String(20), nullable=False)
     # "Warning" | "1 HR" | "2 HR" | "3 HR" | "Half Day" | "Full Day" | "Termination"
     score_deduction   = Column(Float, default=0.0, nullable=False)
-    hr_flagged        = Column(Boolean, default=False, nullable=False)
+    hr_flagged        = Column(Boolean, default=False, nullable=False, index=True)
     auto_fail         = Column(Boolean, default=False, nullable=False)
     evidence          = Column(Text, nullable=True)
     timestamp_in_call = Column(String(10), nullable=True)
     # "MM:SS" format, e.g. "03:45"
     created_at        = Column(DateTime(timezone=True),
-                               default=lambda: datetime.now(timezone.utc))
+                               default=lambda: datetime.now(timezone.utc),
+                               index=True)
 
     # Relationships
     employee  = relationship("Employee", back_populates="violations")
@@ -427,4 +452,23 @@ class ScoreOverrideAudit(Base):
     # Relationships
     call          = relationship("Call", backref="override_audits")
     reviewer      = relationship("Employee")
+
+
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    actor_id      = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    actor_email   = Column(String(255), nullable=True)
+    action        = Column(String(100), nullable=False)
+    target        = Column(String(255), nullable=True)
+    before_state  = Column(Text, nullable=True)
+    after_state   = Column(Text, nullable=True)
+    reason        = Column(Text, nullable=True)
+    success       = Column(Boolean, nullable=False, default=True)
+    created_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    # Relationships
+    actor         = relationship("Employee", foreign_keys=[actor_id])
+
 

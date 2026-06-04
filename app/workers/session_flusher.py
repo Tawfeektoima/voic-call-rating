@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from app.models import LiveSession, LiveTranscriptSegment, Call, LiveSessionStatus, CallStatus
+from app.models import LiveSession, LiveTranscriptSegment, Call, LiveSessionStatus, CallStatus, SystemLog
 from app.worker import evaluate_live_call_task
 from app.services.transcription import transcriber
 from app.services.agent_archive import read_agent_stream, flush_agent_stream
@@ -121,7 +121,18 @@ async def flush_live_session(session_id: str, db: Session):
 
     except Exception as e:
         db.rollback()
+        error_msg = f"Live session flush failed for {session_id}: {str(e)}"
         print(f"[Flush Error {session_id}] Critical failure during session flush: {str(e)}")
+        try:
+            log_entry = SystemLog(
+                error_type="processing_failure",
+                error_message=error_msg,
+                severity="critical"
+            )
+            db.add(log_entry)
+            db.commit()
+        except Exception as log_err:
+            print(f"[Flush Logging Error] Failed to write SystemLog: {log_err}")
         if session:
             # Revert status to allow retry or manual intervention if needed
             session.status = LiveSessionStatus.ACTIVE

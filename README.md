@@ -29,6 +29,15 @@ sudo apt update && sudo apt install ffmpeg
 - **Production:** PostgreSQL 16+ is required. Set `ENVIRONMENT=production` in your `.env` file to enforce this. The application will refuse to start with SQLite if `ENVIRONMENT=production` is set.
 - **Multi-worker:** SQLite will cause `database is locked` errors with multiple Celery workers. Always use PostgreSQL for any multi-worker setup.
 
+## Production Hardening
+
+- Production startup does not create tables automatically. Run Alembic migrations before starting the API:
+```bash
+alembic upgrade head
+```
+- Production Redis must be authenticated. Set `REDIS_PASSWORD` and point the app at the protected Redis service, or provide fully authenticated Redis URLs directly.
+- The app builds Redis defaults only outside production. In production, use authenticated Redis settings only.
+
 ## Running the Platform
 Use the provided batch file:
 `run_platform.bat`
@@ -37,6 +46,31 @@ Or start services manually:
 1. **Backend:** `uvicorn app.main:app --reload`
 2. **Worker:** `celery -A app.worker.celery_app worker --loglevel=info -P solo`
 3. **Frontend:** `cd "AI Call Center Platform" && npm run dev`
+
+## Production Deployment
+
+Use the production compose file for API, worker, PostgreSQL, and Redis services:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d postgres redis
+docker compose -f docker-compose.prod.yml run --rm api alembic upgrade head
+docker compose -f docker-compose.prod.yml up -d api worker
+```
+
+The production stack expects PostgreSQL and Redis credentials in the environment.
+
+## Release Verification
+
+- Backend compile check:
+  `python -m compileall app`
+- Backend test suite:
+  `python -m pytest -q tests`
+- Frontend test and build:
+  `cd "AI Call Center Platform" && npm ci && npm test && npm run build`
+- Basic product smoke path:
+  `python run_smoke_test.py`
+
+See `docs/production_readiness.md` for the full deployment checklist, required environment variables, health checks, and smoke-test expectations.
 
 ## Utility Scripts
 

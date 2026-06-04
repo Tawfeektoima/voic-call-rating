@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import LiveSession, Employee
+from app.models import LiveSession, Employee, SystemLog
 from app.schemas import SessionStartRequest, SessionStartResponse
-from app.routers.auth import get_current_user
+from app.routers.auth import get_current_user, get_user_from_token
 from app.workers.asr_worker import SessionASRBuffer
 from app.workers.session_flusher import flush_live_session
 from app.services.gpu_router import get_best_gpu
@@ -97,7 +97,8 @@ from app.database import SessionLocal
 async def live_audio_websocket(
     websocket: WebSocket,
     session_id: str,
-    token: str = Query(...)
+    token: str = Query(...),
+    auth_token: str | None = Query(default=None),
 ):
     """
     WebSocket endpoint for receiving live audio data.
@@ -121,6 +122,20 @@ async def live_audio_websocket(
         if not session or session.reconnect_token != token:
             # Unauthorized or invalid session
             await websocket.close(code=4003)
+            return
+
+        if not auth_token:
+            await websocket.close(code=4401)
+            return
+
+        try:
+            current_user = get_user_from_token(auth_token, db)
+        except Exception:
+            await websocket.close(code=4401)
+            return
+
+        if current_user.id != session.agent_id:
+            await websocket.close(code=4403)
             return
 
         await websocket.accept()
@@ -173,10 +188,23 @@ async def live_audio_websocket(
                 
         except WebSocketDisconnect:
             print(f"[WS] Session {session_id} disconnected normally.")
-        except Exception as e:
-            import traceback
-            print(f"[WS CRASH] Session {session_id}: {e}")
-            print(traceback.format_exc())
+    except Exception as e:
+        import traceback
+        error_msg = f"Live WS session {session_id} crashed: {str(e)}"
+        print(f"[WS CRASH] Session {session_id}: {e}")
+        print(traceback.format_exc())
+        try:
+            db_log = SessionLocal()
+            log_entry = SystemLog(
+                error_type="processing_failure",
+                error_message=error_msg,
+                severity="critical"
+            )
+            db_log.add(log_entry)
+            db_log.commit()
+            db_log.close()
+        except Exception as log_err:
+            print(f"[WS Logging Error] Failed to write SystemLog: {log_err}")
             
     finally:
         # Ensure buffer is flushed
