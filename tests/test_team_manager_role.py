@@ -44,7 +44,7 @@ def test_admin_can_create_team_manager():
             "name": "Team Manager Bob",
             "email": "tm_bob@example.com",
             "employee_code": "TM_BOB_001",
-            "password": "password123",
+            "password": "Password123!",
             "role": "TEAM_MANAGER"
         })
         assert response.status_code == 200, f"Expected 200, got {response.status_code}"
@@ -110,7 +110,7 @@ def test_login_serializes_team_manager():
     """Verify that login returns role 'TEAM_MANAGER' for a Team Manager user."""
     db: Session = SessionLocal()
     try:
-        password = "tmmanagerpass123"
+        password = "Tmmanagerpass123!"
         hashed_pwd = get_password_hash(password)
         user = Employee(
             name="Login Team Manager",
@@ -128,9 +128,10 @@ def test_login_serializes_team_manager():
     # Attempt Login
     response = client.post(
         "/api/auth/login",
-        json={"email": "tm_login_test@example.com", "password": "tmmanagerpass123"}
+        json={"email": "tm_login_test@example.com", "password": "Tmmanagerpass123!"}
     )
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
     data = response.json()
     assert "access_token" in data
     assert data["user"]["role"] == "TEAM_MANAGER"
+

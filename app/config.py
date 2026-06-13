@@ -34,6 +34,25 @@ class Settings(BaseSettings):
     MAX_FILE_SIZE_MB: int = 100
     ALLOWED_EXTENSIONS: str = ".wav,.mp3,.m4a,.ogg,.flac,.webm"
 
+    # Employee identity
+    GENERATED_EMAIL_DOMAIN: str = "EIACS.com"
+    GENERATED_EMAIL_PREFIX: str = "emp"
+
+    # Login OTP
+    LOGIN_OTP_REQUIRED: bool = False
+    LOGIN_OTP_EXPIRE_MINUTES: int = 5
+    LOGIN_OTP_MAX_ATTEMPTS: int = 5
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = ""
+    SMTP_USE_TLS: bool = True
+
+    # Password hashing/onboarding
+    BCRYPT_ROUNDS: int = 12
+    DEFAULT_EMPLOYEE_PASSWORD: str = "Eiacs$1234#"
+
     # Redis & Celery
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379

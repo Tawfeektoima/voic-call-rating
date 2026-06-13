@@ -27,7 +27,7 @@ def test_live_websocket_requires_auth_token():
         employee = Employee(
             name="WS Auth User",
             email="ws_auth_user@example.com",
-            hashed_password=get_password_hash("password123"),
+            hashed_password=get_password_hash("Password123!"),
             role=UserRole.AGENT,
             employee_code="WS_AUTH_USER",
             status="active",
@@ -62,3 +62,4 @@ def test_live_websocket_requires_auth_token():
         db.commit()
         db.close()
         settings.LIVE_PIPELINE_ENABLED = original_live_flag
+

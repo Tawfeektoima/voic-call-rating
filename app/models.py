@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     Column, Integer, String, Float, Text, DateTime, Date,
-    ForeignKey, Enum as SAEnum, JSON, Boolean, Index,
+    ForeignKey, Enum as SAEnum, JSON, Boolean, Index, UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -110,8 +110,10 @@ class Employee(Base):
     id         = Column(Integer, primary_key=True, index=True)
     name       = Column(String(255), nullable=False)
     email      = Column(String(255), unique=True, index=True, nullable=False)
+    otp_email  = Column(String(255), nullable=True, index=True)
     department = Column(String(255), nullable=True)
     employee_code = Column(String(50), unique=True, nullable=False, index=True)
+    national_id_hash = Column(String(128), nullable=True, unique=True, index=True)
     hashed_password = Column(String(255), nullable=False)
     role       = Column(SAEnum(UserRole), default=UserRole.AGENT, nullable=False, index=True)
     avatar     = Column(String(255), nullable=True) # URL or initials
@@ -129,9 +131,31 @@ class Employee(Base):
     coaching_sessions = relationship("CoachingSession", back_populates="employee", cascade="all, delete-orphan")
     violations = relationship("AgentViolation", back_populates="employee", cascade="all, delete-orphan")
     attendance_records = relationship("AttendanceRecord", back_populates="employee", cascade="all, delete-orphan")
+    login_otp_challenges = relationship("LoginOtpChallenge", back_populates="employee", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Employee id={self.id} name={self.name!r}>"
+
+
+class LoginOtpChallenge(Base):
+    __tablename__ = "login_otp_challenges"
+    __table_args__ = (
+        Index("ix_login_otp_employee_active", "employee_id", "used_at", "expires_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    otp_hash = Column(String(128), nullable=False)
+    purpose = Column(String(50), default="LOGIN", nullable=False, index=True)
+    destination_email = Column(String(255), nullable=False)
+    attempts = Column(Integer, default=0, nullable=False)
+    max_attempts = Column(Integer, default=5, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    ip_address = Column(String(64), nullable=True)
+
+    employee = relationship("Employee", back_populates="login_otp_challenges")
 
 
 class Campaign(Base):
@@ -491,6 +515,31 @@ class AuditEvent(Base):
 
     # Relationships
     actor         = relationship("Employee", foreign_keys=[actor_id])
+
+
+class AppPermission(Base):
+    __tablename__ = "app_permissions"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    key         = Column(String(100), unique=True, nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    is_active   = Column(Boolean, default=True, nullable=False, index=True)
+    created_at  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+class RolePermission(Base):
+    __tablename__ = "role_permissions"
+    __table_args__ = (
+        UniqueConstraint("role", "permission_id", name="uq_role_permission"),
+        Index("ix_role_permissions_role", "role"),
+    )
+
+    id            = Column(Integer, primary_key=True, index=True)
+    role          = Column(SAEnum(UserRole), nullable=False)
+    permission_id = Column(Integer, ForeignKey("app_permissions.id"), nullable=False, index=True)
+    created_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    permission = relationship("AppPermission")
 
 
 class AttendanceRecord(Base):

@@ -6,6 +6,7 @@ from app.main import app
 from app.database import SessionLocal
 from app.models import Employee, UserRole, Campaign
 from app.routers.auth import get_current_user
+from app.security import verify_password
 
 client = TestClient(app)
 
@@ -27,8 +28,10 @@ def cleanup_test_employees():
 
 @pytest.fixture(autouse=True)
 def run_around_tests():
+    app.dependency_overrides.clear()
     cleanup_test_employees()
     yield
+    app.dependency_overrides.clear()
     cleanup_test_employees()
 
 def setup_campaigns():
@@ -86,7 +89,7 @@ def test_template_download():
     app.dependency_overrides[get_current_user] = lambda: mock_admin
     response = client.get("/api/hr/template")
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert "Name,Email,Employee Code,Campaign" in response.text
+    assert "Name,Email,OTP Email,National ID,Employee Code,Campaign" in response.text
     print("test_template_download passed!")
 
 def test_preview_parsing():
@@ -143,6 +146,26 @@ def test_preview_parsing():
     assert any("campaign" in err.lower() and "does not exist" in err.lower() for err in errors_r4)
     assert any("invalid role" in err.lower() for err in errors_r4)
     print("test_preview_parsing passed!")
+
+
+def test_preview_generates_and_normalizes_employee_email():
+    """Verify bulk preview can generate email from code and normalize EIACS domain variants."""
+    app.dependency_overrides[get_current_user] = lambda: mock_admin
+
+    csv_content = (
+        "Name,Email,Employee Code,Role\n"
+        "Generated Email,,TEST_BULK_GEN_001,AGENT\n"
+        "Normalized Email,emp-349@.EIACS.Com,TEST_BULK_GEN_002,AGENT\n"
+    )
+    file_payload = {"file": ("test_generated_emails.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")}
+
+    response = client.post("/api/hr/preview", files=file_payload)
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+
+    json_data = response.json()
+    assert json_data["summary"]["valid"] == 2
+    assert json_data["data"][0]["email"] == "emp-test_bulk_gen_001@eiacs.com"
+    assert json_data["data"][1]["email"] == "emp-349@eiacs.com"
 
 def test_bulk_import_atomic():
     """Verify atomic import fails completely if there are any errors."""
@@ -227,14 +250,70 @@ def test_bulk_import_non_atomic():
     assert e2 is None, "Invalid employee should not be inserted"
     print("test_bulk_import_non_atomic passed!")
 
+
+def test_bulk_import_generates_email_from_employee_code():
+    """Verify bulk import stores the generated EIACS email when email is omitted."""
+    app.dependency_overrides[get_current_user] = lambda: mock_admin
+    db: Session = SessionLocal()
+
+    try:
+        payload = [
+            {
+                "index": 1,
+                "name": "Generated Import",
+                "employee_code": "TEST_BULK_IMPORT_GEN",
+                "role": "AGENT"
+            }
+        ]
+
+        response = client.post("/api/hr/import?atomic=false", json=payload)
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+
+        res_data = response.json()
+        assert res_data["success_count"] == 1
+        assert res_data["success"][0]["email"] == "emp-test_bulk_import_gen@eiacs.com"
+
+        employee = db.query(Employee).filter(Employee.employee_code == "TEST_BULK_IMPORT_GEN").first()
+        assert employee is not None
+        assert employee.email == "emp-test_bulk_import_gen@eiacs.com"
+        assert employee.hashed_password != "Eiacs$1234#"
+        assert verify_password("Eiacs$1234#", employee.hashed_password)
+    finally:
+        db.close()
+
+
+def test_bulk_import_rejects_weak_password():
+    """Verify bulk import enforces the shared password complexity policy."""
+    app.dependency_overrides[get_current_user] = lambda: mock_admin
+
+    payload = [
+        {
+            "index": 1,
+            "name": "Weak Password Import",
+            "employee_code": "TEST_BULK_WEAK_PASSWORD",
+            "password": "weakpass1",
+            "role": "AGENT"
+        }
+    ]
+
+    response = client.post("/api/hr/import?atomic=false", json=payload)
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+
+    res_data = response.json()
+    assert res_data["success_count"] == 0
+    assert res_data["failed_count"] == 1
+    assert "uppercase" in res_data["failed"][0]["error"].lower()
+
 if __name__ == "__main__":
     try:
         cleanup_test_employees()
         
         test_template_download()
         test_preview_parsing()
+        test_preview_generates_and_normalizes_employee_email()
         test_bulk_import_atomic()
         test_bulk_import_non_atomic()
+        test_bulk_import_generates_email_from_employee_code()
         
         print("\nAll bulk onboarding tests passed successfully!")
     finally:
@@ -242,3 +321,4 @@ if __name__ == "__main__":
         cleanup_campaigns()
         # Reset overrides
         app.dependency_overrides.clear()
+

@@ -19,11 +19,12 @@ except Exception:
     NVML_AVAILABLE = False
 
 from app.database import get_db
-from app.models import SystemLog, Call, CallStatus, UserRole, Employee
+from app.models import SystemLog, Call, CallStatus, Employee
 from app.schemas import SystemMetrics, SystemLogOut, SystemMetricPoint, ServiceStatus
 from app.routers.auth import get_current_user
 from app.services.aggregation import calculate_core_kpis
 from app.config import get_settings
+from app.permissions import Permission, require_permission
 
 router = APIRouter(prefix="/api/system", tags=["System Monitoring"])
 
@@ -35,8 +36,7 @@ def get_system_metrics(
     """
     Get real-time system performance metrics.
     """
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail="Only admins can view system health.")
+    require_permission(current_user, Permission.VIEW_SYSTEM_HEALTH, detail="Only admins can view system health.")
 
     # Calculate real stats
     kpis = calculate_core_kpis(db)
@@ -242,8 +242,7 @@ def get_system_alerts(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail="Only admins can view alerts.")
+    require_permission(current_user, Permission.VIEW_SYSTEM_HEALTH, detail="Only admins can view alerts.")
 
     return db.query(SystemLog).order_by(SystemLog.created_at.desc()).all()
 
@@ -253,8 +252,7 @@ def resolve_alert(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail="Only admins can resolve alerts.")
+    require_permission(current_user, Permission.RESOLVE_SYSTEM_ALERTS, detail="Only admins can resolve alerts.")
 
     log = db.query(SystemLog).filter(SystemLog.id == log_id).first()
     if not log:

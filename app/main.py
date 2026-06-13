@@ -30,7 +30,7 @@ if os.path.exists(scripts_path) and scripts_path not in os.environ["PATH"]:
 # Load environment variables
 load_dotenv()
 
-from app.database import engine, Base
+from app.database import engine, Base, SessionLocal
 from app.routers import audio, analytics, admin, auth, system, export, hr, websocket_router, live, review, notes
 from app.recovery import recover_stuck_tasks
 from app.services.websocket import manager
@@ -118,6 +118,14 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     if settings.ENVIRONMENT.lower() != "production":
         Base.metadata.create_all(bind=engine)
+        db = SessionLocal()
+        try:
+            from app.services.role_permissions import seed_role_permissions
+
+            seed_role_permissions(db)
+            db.commit()
+        finally:
+            db.close()
     if settings.DATABASE_URL.startswith("sqlite"):
         print("=" * 60)
         print("⚠️  WARNING: Running with SQLite database.")

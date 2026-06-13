@@ -17,6 +17,7 @@ const pageTitles: Record<string, string> = {
   '/team-leader/agents': 'Team Leader Agents',
   '/team-leader/calls':  'Team Leader Calls',
   '/team-leader/kpis':   'Team Leader KPIs',
+  '/team-manager':   'Team Manager Workspace',
   '/notes':          'Workflow Notes',
 };
 

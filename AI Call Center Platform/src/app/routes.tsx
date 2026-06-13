@@ -18,8 +18,9 @@ import { TeamLeaderDashboard } from './pages/TeamLeaderDashboard';
 import { TeamLeaderAgents } from './pages/TeamLeaderAgents';
 import { TeamLeaderCalls } from './pages/TeamLeaderCalls';
 import { TeamLeaderKpis } from './pages/TeamLeaderKpis';
+import { TeamManagerWorkspace } from './pages/TeamManagerWorkspace';
 import { RoleGuard } from './components/auth/RoleGuard';
-import { UserRole } from './lib/types';
+import { PERMISSIONS } from './lib/roles';
 
 function NotFound() {
   return (
@@ -39,23 +40,24 @@ export const router = createBrowserRouter([
     path: '/',
     Component: Layout,
     children: [
-      { index: true, Component: Dashboard },
-      { path: 'campaigns', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.QA, UserRole.HR_MANAGER]}><CampaignManager /></RoleGuard> },
-      { path: 'calls', Component: CallExplorer },
-      { path: 'calls/:id', Component: CallDetail },
-      { path: 'intelligence', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.HR_MANAGER]}><BusinessIntelligence /></RoleGuard> },
-      { path: 'success-library', Component: SuccessLibrary },
-      { path: 'agents/:id', Component: AgentProfile },
-      { path: 'data-center', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.HR_MANAGER, UserRole.QA]}><DataCenter /></RoleGuard> },
-      { path: 'system-health', element: <RoleGuard allowedRoles={[UserRole.ADMIN]}><SystemHealth /></RoleGuard> },
-      { path: 'hr', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.HR_MANAGER, UserRole.QA]}><HRDashboard /></RoleGuard> },
-      { path: 'hr/agents', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.HR_MANAGER]}><HRManagement /></RoleGuard> },
-      { path: 'team-leader', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.TEAM_LEADER]}><TeamLeaderDashboard /></RoleGuard> },
-      { path: 'team-leader/agents', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.TEAM_LEADER]}><TeamLeaderAgents /></RoleGuard> },
-      { path: 'team-leader/calls', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.TEAM_LEADER]}><TeamLeaderCalls /></RoleGuard> },
-      { path: 'team-leader/kpis', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.TEAM_LEADER]}><TeamLeaderKpis /></RoleGuard> },
-      { path: 'notes', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.QA, UserRole.AGENT, UserRole.HR_MANAGER, UserRole.OPS_MANAGER, UserRole.TEAM_MANAGER, UserRole.TEAM_LEADER]}><NotesInbox /></RoleGuard> },
-      { path: 'notes/:noteId', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.QA, UserRole.AGENT, UserRole.HR_MANAGER, UserRole.OPS_MANAGER, UserRole.TEAM_MANAGER, UserRole.TEAM_LEADER]}><NoteThread /></RoleGuard> },
+      { index: true, element: <RoleGuard anyPermissions={[PERMISSIONS.VIEW_OWN_DASHBOARD, PERMISSIONS.VIEW_GLOBAL_DASHBOARD]}><Dashboard /></RoleGuard> },
+      { path: 'campaigns', element: <RoleGuard requiredPermission={PERMISSIONS.VIEW_CAMPAIGNS}><CampaignManager /></RoleGuard> },
+      { path: 'calls', element: <RoleGuard anyPermissions={[PERMISSIONS.VIEW_OWN_CALLS, PERMISSIONS.VIEW_RAW_CALLS]}><CallExplorer /></RoleGuard> },
+      { path: 'calls/:id', element: <RoleGuard anyPermissions={[PERMISSIONS.VIEW_OWN_CALLS, PERMISSIONS.VIEW_RAW_CALLS]}><CallDetail /></RoleGuard> },
+      { path: 'intelligence', element: <RoleGuard requiredPermission={PERMISSIONS.VIEW_BI}><BusinessIntelligence /></RoleGuard> },
+      { path: 'success-library', element: <RoleGuard requiredPermission={PERMISSIONS.VIEW_SUCCESS_LIBRARY}><SuccessLibrary /></RoleGuard> },
+      { path: 'agents/:id', element: <RoleGuard anyPermissions={[PERMISSIONS.VIEW_OWN_PROFILE, PERMISSIONS.VIEW_AGENT_PROFILES]}><AgentProfile /></RoleGuard> },
+      { path: 'data-center', element: <RoleGuard requiredPermission={PERMISSIONS.VIEW_DATA_CENTER}><DataCenter /></RoleGuard> },
+      { path: 'system-health', element: <RoleGuard requiredPermission={PERMISSIONS.VIEW_SYSTEM_HEALTH}><SystemHealth /></RoleGuard> },
+      { path: 'hr', element: <RoleGuard requiredPermission={PERMISSIONS.VIEW_HR_DASHBOARD}><HRDashboard /></RoleGuard> },
+      { path: 'hr/agents', element: <RoleGuard requiredPermission={PERMISSIONS.VIEW_EMPLOYEES}><HRManagement /></RoleGuard> },
+      { path: 'team-leader', element: <RoleGuard requiredPermission={PERMISSIONS.VIEW_TEAM_LEADER_WORKSPACE}><TeamLeaderDashboard /></RoleGuard> },
+      { path: 'team-leader/agents', element: <RoleGuard requiredPermission={PERMISSIONS.VIEW_TEAM_LEADER_WORKSPACE}><TeamLeaderAgents /></RoleGuard> },
+      { path: 'team-leader/calls', element: <RoleGuard requiredPermission={PERMISSIONS.VIEW_TEAM_LEADER_WORKSPACE}><TeamLeaderCalls /></RoleGuard> },
+      { path: 'team-leader/kpis', element: <RoleGuard requiredPermission={PERMISSIONS.VIEW_TEAM_LEADER_WORKSPACE}><TeamLeaderKpis /></RoleGuard> },
+      { path: 'team-manager', element: <RoleGuard requiredPermission={PERMISSIONS.VIEW_TEAM_MANAGER_WORKSPACE}><TeamManagerWorkspace /></RoleGuard> },
+      { path: 'notes', element: <RoleGuard requiredPermission={PERMISSIONS.VIEW_NOTES}><NotesInbox /></RoleGuard> },
+      { path: 'notes/:noteId', element: <RoleGuard requiredPermission={PERMISSIONS.VIEW_NOTES}><NoteThread /></RoleGuard> },
       { path: '*', Component: NotFound },
     ],
   },

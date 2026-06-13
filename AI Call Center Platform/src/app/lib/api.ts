@@ -16,11 +16,22 @@ import {
   RoleNoteRecipientParams,
   RoleNoteStatusUpdatePayload,
   RoleNoteThread,
+  RoleDefinition,
   TeamLeaderAgentRowOut,
   TeamLeaderCallRowOut,
   TeamLeaderDashboardOut,
   TeamLeaderKpisOut,
   TeamLeaderTeamRowOut,
+  AgentTransferRequestCreate,
+  AgentTransferRequestOut,
+  TeamManagerAgentRowOut,
+  TeamManagerAttendanceReportOut,
+  TeamManagerConversionReportOut,
+  TeamManagerDashboardOut,
+  TeamManagerKpisOut,
+  TeamManagerRevenueReportOut,
+  TeamManagerSalesReportOut,
+  TeamManagerTeamRowOut,
 } from './types';
 
 // Create a centralized Axios instance
@@ -242,6 +253,11 @@ export const getCurrentUser = async (): Promise<CurrentUser> => {
   return response.data;
 };
 
+export const getApprovedRoles = async (): Promise<RoleDefinition[]> => {
+  const response = await api.get<RoleDefinition[]>('/api/auth/roles');
+  return response.data;
+};
+
 export const getNotesInbox = async (params?: RoleNoteFilters): Promise<RoleNote[]> => {
   const response = await api.get<RoleNote[]>('/api/notes/inbox', { params });
   return response.data;
@@ -330,6 +346,61 @@ export const getTeamLeaderCall = async (callId: number): Promise<TeamLeaderCallR
 
 export const getTeamLeaderKpis = async (params?: { month?: string }): Promise<TeamLeaderKpisOut> => {
   const response = await api.get<TeamLeaderKpisOut>('/api/team-leader/kpis', { params });
+  return response.data;
+};
+
+export const getTeamManagerDashboard = async (): Promise<TeamManagerDashboardOut> => {
+  const response = await api.get<TeamManagerDashboardOut>('/api/team-manager/dashboard');
+  return response.data;
+};
+
+export const getTeamManagerTeams = async (params?: { skip?: number; limit?: number }): Promise<TeamManagerTeamRowOut[]> => {
+  const response = await api.get<TeamManagerTeamRowOut[]>('/api/team-manager/teams', { params });
+  return response.data;
+};
+
+export const getTeamManagerAgents = async (params?: { team_id?: number; skip?: number; limit?: number }): Promise<TeamManagerAgentRowOut[]> => {
+  const response = await api.get<TeamManagerAgentRowOut[]>('/api/team-manager/agents', { params });
+  return response.data;
+};
+
+export const getTeamManagerSalesReport = async (): Promise<TeamManagerSalesReportOut> => {
+  const response = await api.get<TeamManagerSalesReportOut>('/api/team-manager/reports/sales');
+  return response.data;
+};
+
+export const getTeamManagerRevenueReport = async (): Promise<TeamManagerRevenueReportOut> => {
+  const response = await api.get<TeamManagerRevenueReportOut>('/api/team-manager/reports/revenue');
+  return response.data;
+};
+
+export const getTeamManagerConversionReport = async (): Promise<TeamManagerConversionReportOut> => {
+  const response = await api.get<TeamManagerConversionReportOut>('/api/team-manager/reports/conversion');
+  return response.data;
+};
+
+export const getTeamManagerAttendanceReport = async (): Promise<TeamManagerAttendanceReportOut> => {
+  const response = await api.get<TeamManagerAttendanceReportOut>('/api/team-manager/reports/attendance');
+  return response.data;
+};
+
+export const getTeamManagerKpis = async (params?: { month?: string }): Promise<TeamManagerKpisOut> => {
+  const response = await api.get<TeamManagerKpisOut>('/api/team-manager/kpis', { params });
+  return response.data;
+};
+
+export const getTeamManagerTransferRequests = async (): Promise<AgentTransferRequestOut[]> => {
+  const response = await api.get<AgentTransferRequestOut[]>('/api/team-manager/transfer-requests');
+  return response.data;
+};
+
+export const createTeamManagerTransferRequest = async (payload: AgentTransferRequestCreate): Promise<AgentTransferRequestOut> => {
+  const response = await api.post<AgentTransferRequestOut>('/api/team-manager/transfer-requests', payload);
+  return response.data;
+};
+
+export const cancelTeamManagerTransferRequest = async (requestId: number): Promise<AgentTransferRequestOut> => {
+  const response = await api.patch<AgentTransferRequestOut>(`/api/team-manager/transfer-requests/${requestId}/cancel`);
   return response.data;
 };
 

@@ -3,13 +3,17 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
 
+from app.config import get_settings
 from app.database import get_db
 from app.models import Employee, Campaign, Call, CallStatus, SystemLog, UserRole, EmployeeStatus, AuditEvent, Team, AgentTransferRequest, EmployeeTeamAssignment, KpiThresholdConfig
-from app.schemas import EmployeeCreate, EmployeeOut, EmployeeUpdate, EmployeeStatusUpdate, CampaignCreate, CampaignOut, SystemMetrics, SystemLogOut, SystemMetricPoint, AlertCreate, AuditEventOut, KpiThresholdCreate, KpiThresholdUpdate, KpiThresholdOut, AgentTransferRequestOut
+from app.schemas import EmployeeCreate, EmployeeOut, EmployeeUpdate, EmployeeStatusUpdate, CampaignCreate, CampaignOut, SystemMetrics, SystemLogOut, SystemMetricPoint, AlertCreate, AuditEventOut, KpiThresholdCreate, KpiThresholdUpdate, KpiThresholdOut, AgentTransferRequestOut, RoleDefinitionOut, RolePermissionCatalogOut, RolePermissionUpdate
 from app.routers.auth import get_current_user
 from app.services.audit import log_audit_event
 from app.services.kpi_catalog import get_kpi_catalog, get_kpi_definition, is_valid_kpi_key
-from app.security import get_password_hash
+from app.security import get_password_hash, validate_password_strength
+from app.permissions import Permission, can_assign_role, list_role_definitions, normalize_role_value, require_permission
+from app.services.role_permissions import set_role_permission_values
+from app.services.employee_identity import hash_national_id, normalize_contact_email, normalize_employee_code, normalize_employee_email
 
 router = APIRouter(prefix="/api/admin", tags=["Admin (Setup)"])
 
@@ -19,9 +23,8 @@ def _serialize_enum_value(value):
 
 
 def _validate_role(role_value: str) -> UserRole:
-    normalized = role_value.upper().replace("-", "_").replace(" ", "_")
     try:
-        return UserRole(normalized)
+        return normalize_role_value(role_value)
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
@@ -43,12 +46,13 @@ def _prevent_self_lockout(current_user: Employee, employee: Employee, role: Opti
     if current_user.id != employee.id:
         return
 
-    role_changed = role is not None and role != current_user.role
+    current_role = _validate_role(current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role))
+    role_changed = role is not None and role != current_role
     status_changed = status is not None and status.value != current_user.status
     if role_changed or status_changed:
         raise HTTPException(
             status_code=400,
-            detail="Admins cannot change their own role or status to prevent lockout."
+            detail="Users cannot change their own role or status to prevent lockout."
         )
 
 
@@ -75,8 +79,30 @@ def _audit_employee_update(
 
 
 def _require_admin(current_user: Employee) -> None:
-    if current_user.role != UserRole.ADMIN:
+    try:
+        role = normalize_role_value(current_user.role)
+    except ValueError:
+        role = None
+    if role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="Only admins can perform this action.")
+
+
+def _require_employee_view_access(current_user: Employee) -> None:
+    require_permission(current_user, Permission.VIEW_EMPLOYEES, detail="Only admins and HR managers can view the employee list.")
+
+
+def _require_employee_management_access(current_user: Employee) -> None:
+    require_permission(current_user, Permission.MANAGE_EMPLOYEES, detail="Only admins and HR managers can manage employees.")
+
+
+def _require_role_assignment_access(current_user: Employee, target_role: UserRole) -> None:
+    require_permission(current_user, Permission.CHANGE_EMPLOYEE_ROLE, detail="Only admins and HR managers can change employee roles.")
+    if not can_assign_role(current_user, target_role):
+        raise HTTPException(status_code=403, detail="HR managers cannot assign the ADMIN role.")
+
+
+def _require_status_change_access(current_user: Employee) -> None:
+    require_permission(current_user, Permission.CHANGE_EMPLOYEE_STATUS, detail="Only admins and HR managers can update employee status.")
 
 
 def _validate_kpi_threshold_scope(team_id: Optional[int], campaign_id: Optional[int]) -> None:
@@ -105,22 +131,44 @@ def create_employee(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
-    # Role Check
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail="Only admins can create employees.")
+    _require_employee_management_access(current_user)
+
+    employee.employee_code = normalize_employee_code(employee.employee_code)
+    try:
+        employee.email = normalize_employee_email(employee.email, employee.employee_code)
+        employee.otp_email = normalize_contact_email(employee.otp_email)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    national_id_hash = hash_national_id(employee.national_id)
 
     db_emp = db.query(Employee).filter(Employee.employee_code == employee.employee_code).first()
     if db_emp:
         raise HTTPException(status_code=400, detail="Employee code already registered")
+    db_emp_email = db.query(Employee).filter(func.lower(Employee.email) == employee.email.lower()).first()
+    if db_emp_email:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    if national_id_hash:
+        db_emp_national_id = db.query(Employee).filter(Employee.national_id_hash == national_id_hash).first()
+        if db_emp_national_id:
+            raise HTTPException(status_code=400, detail="National ID already registered")
     
-    # Hash password if provided
+    # Hash password. New employees get the configured default when HR/Admin omits it.
     emp_data = employee.model_dump()
-    if "password" in emp_data:
-        emp_data["hashed_password"] = get_password_hash(emp_data.pop("password"))
+    emp_data.pop("national_id", None)
+    emp_data["national_id_hash"] = national_id_hash
+    raw_password = (emp_data.pop("password", None) or get_settings().DEFAULT_EMPLOYEE_PASSWORD).strip()
+    if len(raw_password) < 6:
+        raise HTTPException(status_code=400, detail="Default employee password must be at least 6 characters long.")
+    try:
+        validate_password_strength(raw_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    emp_data["hashed_password"] = get_password_hash(raw_password)
     
     # Validate and normalize role
     if "role" in emp_data and emp_data["role"] is not None:
         emp_data["role"] = _validate_role(emp_data["role"])
+        _require_role_assignment_access(current_user, emp_data["role"])
     
     new_emp = Employee(**emp_data)
     db.add(new_emp)
@@ -151,15 +199,13 @@ def get_employees(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
-    # Role Check
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail="Only admins can view the employee list.")
+    _require_employee_view_access(current_user)
 
     query = db.query(Employee)
 
     # Apply filters
     if role:
-        query = query.filter(Employee.role == role.upper())
+        query = query.filter(Employee.role == _validate_role(role))
     if status:
         query = query.filter(Employee.status == status.lower())
     if department:
@@ -188,25 +234,19 @@ def update_employee(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
-    # Role Check
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail="Only admins can update employees.")
+    _require_employee_management_access(current_user)
 
     employee = db.query(Employee).filter(Employee.id == employee_id).first()
     if not employee:
         raise HTTPException(status_code=404, detail="Employee not found.")
 
-    # Prevent self-lockout
-    if current_user.id == employee.id:
-        if (data.role and data.role != current_user.role.value) or (data.status and data.status != current_user.status):
-            raise HTTPException(
-                status_code=400,
-                detail="Admins cannot change their own role or status to prevent lockout."
-            )
+    new_role = _validate_role(data.role) if data.role is not None else None
+    new_status = _validate_status(data.status) if data.status is not None else None
+    _prevent_self_lockout(current_user, employee, role=new_role, status=new_status)
 
     # Validate and apply role
-    if data.role is not None:
-        new_role = _validate_role(data.role)
+    if new_role is not None:
+        _require_role_assignment_access(current_user, new_role)
         if employee.role != new_role:
             old_role = employee.role
             employee.role = new_role
@@ -232,8 +272,7 @@ def update_employee(
             )
 
     # Validate and apply status
-    if data.status is not None:
-        new_status = _validate_status(data.status)
+    if new_status is not None:
         if employee.status != new_status.value:
             old_status = employee.status
             employee.status = new_status.value
@@ -270,8 +309,7 @@ def update_employee_status(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
-    if current_user.role not in (UserRole.ADMIN, UserRole.HR_MANAGER):
-        raise HTTPException(status_code=403, detail="Only admins and HR managers can update employee status.")
+    _require_status_change_access(current_user)
 
     employee = db.query(Employee).filter(Employee.id == employee_id).first()
     if not employee:
@@ -316,15 +354,57 @@ def get_audit_logs(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
-    # Role Check
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail="Only admins can view audit logs.")
+    require_permission(current_user, Permission.VIEW_AUDIT_LOGS, detail="Only admins can view audit logs.")
 
     query = db.query(AuditEvent).order_by(AuditEvent.created_at.desc())
     total_count = query.count()
     response.headers["X-Total-Count"] = str(total_count)
 
     return query.offset(skip).limit(limit).all()
+
+
+@router.get("/role-permissions", response_model=RolePermissionCatalogOut)
+def get_role_permission_catalog(
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
+):
+    _require_admin(current_user)
+    return RolePermissionCatalogOut(
+        roles=[RoleDefinitionOut(**item) for item in list_role_definitions(db=db)],
+        available_permissions=sorted(permission.value for permission in Permission),
+    )
+
+
+@router.put("/role-permissions/{role}", response_model=RoleDefinitionOut)
+def update_role_permissions(
+    role: str,
+    payload: RolePermissionUpdate,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
+):
+    _require_admin(current_user)
+    target_role = _validate_role(role)
+    if target_role == UserRole.ADMIN and Permission.VIEW_AUDIT_LOGS.value not in payload.permissions:
+        raise HTTPException(status_code=400, detail="ADMIN must retain audit log access.")
+
+    try:
+        before, after = set_role_permission_values(db, target_role, payload.permissions)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    log_audit_event(
+        db=db,
+        action="PERMISSION_CHANGE",
+        actor_id=current_user.id,
+        actor_email=current_user.email,
+        target=f"Role {target_role.value}",
+        before_state=", ".join(before),
+        after_state=", ".join(after),
+        reason=payload.reason or "Admin role permission update",
+        success=True,
+    )
+    db.commit()
+    return RoleDefinitionOut(**list_role_definitions([target_role], db=db)[0])
 
 
 # --- Campaigns ---
@@ -335,9 +415,7 @@ def create_campaign(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
-    # Role Check
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail="Only admins can create campaigns.")
+    require_permission(current_user, Permission.MANAGE_CAMPAIGNS, detail="Only admins can create campaigns.")
 
     db_camp = db.query(Campaign).filter(Campaign.name == campaign.name).first()
     if db_camp:
@@ -354,9 +432,7 @@ def get_campaigns(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
-    # Role Check
-    if current_user.role == UserRole.AGENT:
-         raise HTTPException(status_code=403, detail="Agents cannot view campaigns.")
+    require_permission(current_user, Permission.VIEW_CAMPAIGNS, detail="Access denied.")
 
     campaigns = db.query(Campaign).all()
     results = []
@@ -387,9 +463,7 @@ def update_campaign(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
-    # Role Check
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail="Only admins can update campaigns.")
+    require_permission(current_user, Permission.MANAGE_CAMPAIGNS, detail="Only admins can update campaigns.")
 
     campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
     if not campaign:
@@ -414,9 +488,7 @@ def delete_campaign(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
-    # Role Check
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail="Only admins can delete campaigns.")
+    require_permission(current_user, Permission.MANAGE_CAMPAIGNS, detail="Only admins can delete campaigns.")
 
     campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
     if not campaign:

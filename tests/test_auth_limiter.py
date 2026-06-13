@@ -22,7 +22,7 @@ def test_login_under_limit_succeeds():
             json={"email": "nonexistent@example.com", "password": "wrongpassword"}
         )
         assert response.status_code == 401
-        assert response.json()["detail"] == "Incorrect email or password"
+        assert response.json()["detail"] == "Incorrect employee code or password"
 
 def test_login_ip_rate_limiting():
     """Verify that login is rate-limited per IP after exceeding the limit."""

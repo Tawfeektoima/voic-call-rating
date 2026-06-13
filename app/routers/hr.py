@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import io
 import pandas as pd
 
+from app.config import get_settings
 from app.database import get_db
 from app.models import AgentViolation, Employee, UserRole, SystemLog, Call, Campaign
 from app.routers.auth import get_current_user
@@ -22,10 +23,39 @@ from app.schemas import (
     EmployeeOut
 )
 from app.security import get_password_hash
+from app.security import validate_password_strength, PASSWORD_STRENGTH_MESSAGE
+from app.permissions import normalize_role_value
+from app.services.employee_identity import hash_national_id, normalize_contact_email, normalize_employee_code, normalize_employee_email
 
 router = APIRouter(prefix="/api/hr", tags=["HR Violations"])
 
 HR_ROLES = [UserRole.ADMIN, UserRole.HR_MANAGER, UserRole.QA]
+BULK_ONBOARDING_ROLES = (UserRole.AGENT, UserRole.QA, UserRole.HR_MANAGER)
+
+
+def _parse_bulk_onboarding_role(raw_role: str) -> tuple[Optional[UserRole], Optional[str]]:
+    try:
+        role = normalize_role_value(raw_role or UserRole.AGENT.value)
+    except ValueError:
+        valid_roles = ", ".join(role.value for role in BULK_ONBOARDING_ROLES)
+        return None, f"Invalid role '{raw_role}'. Must be one of: {valid_roles}"
+    if role == UserRole.TEAM_LEADER:
+        return None, "TEAM_LEADER is not allowed in HR bulk onboarding."
+    if role not in BULK_ONBOARDING_ROLES:
+        valid_roles = ", ".join(role.value for role in BULK_ONBOARDING_ROLES)
+        return None, f"Invalid role '{role.value}'. Must be one of: {valid_roles}"
+    return role, None
+
+
+def _normalize_bulk_employee_identity(raw_email: str | None, raw_employee_code: str | None) -> tuple[str, str, Optional[str]]:
+    employee_code = normalize_employee_code(raw_employee_code or "")
+    if not employee_code:
+        return str(raw_email or "").strip(), employee_code, "Employee code is required."
+    try:
+        email = normalize_employee_email(raw_email, employee_code)
+    except ValueError as exc:
+        return str(raw_email or "").strip(), employee_code, str(exc)
+    return email, employee_code, None
 
 @router.get("/violations/summary", response_model=List[ViolationSummaryRow])
 def get_violations_summary(
@@ -206,11 +236,19 @@ def get_agent_violations(
 ):
     """
     Returns all violations for an agent, newest first.
-    Accessible by: admin, hr_manager
+    Accessible by: admin, hr_manager, qa.
     Agents can only view their own violations.
     """
-    if current_user.role == UserRole.AGENT and current_user.id != employee_id:
-        raise HTTPException(status_code=403, detail="Agents can only view their own violations.")
+    try:
+        current_role = normalize_role_value(current_user.role)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    if current_role == UserRole.AGENT:
+        if current_user.id != employee_id:
+            raise HTTPException(status_code=403, detail="Agents can only view their own violations.")
+    elif current_role not in HR_ROLES:
+        raise HTTPException(status_code=403, detail="Access denied.")
     
     employee = db.query(Employee).filter(Employee.id == employee_id).first()
     if not employee:
@@ -284,7 +322,7 @@ def download_template(
     if current_user.role not in (UserRole.ADMIN, UserRole.HR_MANAGER):
         raise HTTPException(status_code=403, detail="Only admins or HR managers can access onboarding templates.")
     
-    csv_data = "Name,Email,Employee Code,Campaign,Phone Number,Role,Department\nJohn Doe,john.doe@example.com,EMP001,Sales,+1234567890,AGENT,Support\n"
+    csv_data = "Name,Email,OTP Email,National ID,Employee Code,Campaign,Phone Number,Role,Department\nJohn Doe,,john.doe@gmail.com,30001011234567,349,Sales,+1234567890,AGENT,Support\n"
     return Response(
         content=csv_data,
         media_type="text/csv",
@@ -327,6 +365,12 @@ def preview_bulk_agents(
     col_mapping = {
         "name": "name",
         "email": "email",
+        "otp_email": "otp_email",
+        "real_email": "otp_email",
+        "gmail": "otp_email",
+        "personal_email": "otp_email",
+        "national_id": "national_id",
+        "national_id_number": "national_id",
         "employee_code": "employee_code",
         "code": "employee_code",
         "campaign_name": "campaign_name",
@@ -340,7 +384,7 @@ def preview_bulk_agents(
     df = df.rename(columns={c: col_mapping[c] for c in df.columns if c in col_mapping})
 
     # Validate that we have the minimum required columns
-    required_cols = ["name", "email", "employee_code"]
+    required_cols = ["name", "employee_code"]
     missing_cols = [col for col in required_cols if col not in df.columns]
     if missing_cols:
         raise HTTPException(
@@ -351,15 +395,27 @@ def preview_bulk_agents(
     preview_data = []
     seen_codes = set()
     seen_emails = set()
+    seen_national_ids = set()
 
     for i, (_, row) in enumerate(df.iterrows()):
         idx = i + 1
         name = str(row.get("name", "")).strip()
-        email = str(row.get("email", "")).strip()
-        employee_code = str(row.get("employee_code", "")).strip()
+        email, employee_code, identity_error = _normalize_bulk_employee_identity(
+            row.get("email", ""),
+            row.get("employee_code", "")
+        )
+        try:
+            otp_email = normalize_contact_email(row.get("otp_email", ""))
+            otp_email_error = None
+        except ValueError as exc:
+            otp_email = str(row.get("otp_email", "")).strip()
+            otp_email_error = str(exc)
+        national_id_hash = hash_national_id(row.get("national_id", ""))
         campaign_name = str(row.get("campaign_name", "")).strip()
         phone_number = str(row.get("phone_number", "")).strip()
-        role = str(row.get("role", "AGENT")).strip().upper()
+        role_input = str(row.get("role", "AGENT")).strip()
+        role, role_error = _parse_bulk_onboarding_role(role_input)
+        role_value = role.value if role else role_input.upper()
         department = str(row.get("department", "")).strip()
 
         errors = []
@@ -367,30 +423,36 @@ def preview_bulk_agents(
         # Name validation
         if not name:
             errors.append("Name is required.")
+        if identity_error:
+            errors.append(identity_error)
+        if otp_email_error:
+            errors.append(otp_email_error)
 
         # Email validation
-        if not email:
-            errors.append("Email is required.")
-        elif "@" not in email:
-            errors.append("Invalid email format.")
-        else:
-            db_emp_email = db.query(Employee).filter(Employee.email == email).first()
+        if email and "@" in email:
+            normalized_email = email.lower()
+            db_emp_email = db.query(Employee).filter(func.lower(Employee.email) == normalized_email).first()
             if db_emp_email:
                 errors.append(f"Email '{email}' is already registered.")
-            if email in seen_emails:
+            if normalized_email in seen_emails:
                 errors.append(f"Duplicate email '{email}' in upload file.")
-            seen_emails.add(email)
+            seen_emails.add(normalized_email)
 
         # Employee Code validation
-        if not employee_code:
-            errors.append("Employee code is required.")
-        else:
+        if employee_code:
             db_emp_code = db.query(Employee).filter(Employee.employee_code == employee_code).first()
             if db_emp_code:
                 errors.append(f"Employee code '{employee_code}' is already registered.")
             if employee_code in seen_codes:
                 errors.append(f"Duplicate employee code '{employee_code}' in upload file.")
             seen_codes.add(employee_code)
+        if national_id_hash:
+            db_emp_national_id = db.query(Employee).filter(Employee.national_id_hash == national_id_hash).first()
+            if db_emp_national_id:
+                errors.append("National ID is already registered.")
+            if national_id_hash in seen_national_ids:
+                errors.append("Duplicate national ID in upload file.")
+            seen_national_ids.add(national_id_hash)
 
         # Campaign validation
         if campaign_name:
@@ -399,20 +461,18 @@ def preview_bulk_agents(
                 errors.append(f"Campaign '{campaign_name}' does not exist.")
 
         # Role validation
-        valid_roles = [UserRole.AGENT.value, UserRole.QA.value, UserRole.HR_MANAGER.value]
-        if role == UserRole.TEAM_LEADER.value:
-            errors.append("TEAM_LEADER is not allowed in HR bulk onboarding.")
-        elif role not in valid_roles:
-            errors.append(f"Invalid role '{role}'. Must be one of: {', '.join(valid_roles)}")
+        if role_error:
+            errors.append(role_error)
 
         preview_data.append({
             "index": idx,
             "name": name,
             "email": email,
+            "otp_email": otp_email,
             "employee_code": employee_code,
             "campaign_name": campaign_name,
             "phone_number": phone_number,
-            "role": role,
+            "role": role_value,
             "department": department or campaign_name,
             "errors": errors,
             "isValid": len(errors) == 0
@@ -450,6 +510,7 @@ def import_bulk_agents(
     failed_list = []
     seen_codes = set()
     seen_emails = set()
+    seen_national_ids = set()
 
     # Pre-validation pass (especially important for atomic)
     all_validation_passed = True
@@ -458,11 +519,21 @@ def import_bulk_agents(
     for idx, item in enumerate(employees):
         row_num = item.get("index", idx + 1)
         name = str(item.get("name", "")).strip()
-        email = str(item.get("email", "")).strip()
-        employee_code = str(item.get("employee_code", "")).strip()
+        email, employee_code, identity_error = _normalize_bulk_employee_identity(
+            item.get("email", ""),
+            item.get("employee_code", "")
+        )
+        try:
+            otp_email = normalize_contact_email(item.get("otp_email", ""))
+            otp_email_error = None
+        except ValueError as exc:
+            otp_email = str(item.get("otp_email", "")).strip()
+            otp_email_error = str(exc)
+        national_id_hash = hash_national_id(item.get("national_id", ""))
         campaign_name = str(item.get("campaign_name", "")).strip()
         phone_number = str(item.get("phone_number", "")).strip()
-        role = str(item.get("role", "AGENT")).strip().upper()
+        role_input = str(item.get("role", "AGENT")).strip()
+        role, role_error = _parse_bulk_onboarding_role(role_input)
         department = str(item.get("department", "")).strip()
         password = str(item.get("password", "")).strip()
 
@@ -470,41 +541,47 @@ def import_bulk_agents(
 
         if not name:
             errors.append("Name is required.")
-        if not email:
-            errors.append("Email is required.")
-        elif "@" not in email:
-            errors.append("Invalid email format.")
-        else:
-            db_emp_email = db.query(Employee).filter(Employee.email == email).first()
+        if identity_error:
+            errors.append(identity_error)
+        if otp_email_error:
+            errors.append(otp_email_error)
+        if email and "@" in email:
+            normalized_email = email.lower()
+            db_emp_email = db.query(Employee).filter(func.lower(Employee.email) == normalized_email).first()
             if db_emp_email:
                 errors.append(f"Email '{email}' is already registered.")
-            if email in seen_emails:
+            if normalized_email in seen_emails:
                 errors.append(f"Duplicate email '{email}' in batch.")
-            seen_emails.add(email)
+            seen_emails.add(normalized_email)
 
-        if not employee_code:
-            errors.append("Employee code is required.")
-        else:
+        if employee_code:
             db_emp_code = db.query(Employee).filter(Employee.employee_code == employee_code).first()
             if db_emp_code:
                 errors.append(f"Employee code '{employee_code}' is already registered.")
             if employee_code in seen_codes:
                 errors.append(f"Duplicate employee code '{employee_code}' in batch.")
             seen_codes.add(employee_code)
+        if national_id_hash:
+            db_emp_national_id = db.query(Employee).filter(Employee.national_id_hash == national_id_hash).first()
+            if db_emp_national_id:
+                errors.append("National ID is already registered.")
+            if national_id_hash in seen_national_ids:
+                errors.append("Duplicate national ID in batch.")
+            seen_national_ids.add(national_id_hash)
 
         if campaign_name:
             db_camp = db.query(Campaign).filter(Campaign.name == campaign_name).first()
             if not db_camp:
                 errors.append(f"Campaign '{campaign_name}' does not exist.")
 
-        valid_roles = [UserRole.AGENT.value, UserRole.QA.value, UserRole.HR_MANAGER.value]
-        if role == UserRole.TEAM_LEADER.value:
-            errors.append("TEAM_LEADER is not allowed in HR bulk onboarding.")
-        elif role not in valid_roles:
-            errors.append(f"Invalid role '{role}'. Must be one of: {', '.join(valid_roles)}")
+        if role_error:
+            errors.append(role_error)
 
-        if password and len(password) < 6:
-            errors.append("Password must be at least 6 characters long.")
+        if password:
+            try:
+                validate_password_strength(password)
+            except ValueError:
+                errors.append(PASSWORD_STRENGTH_MESSAGE)
 
         if errors:
             all_validation_passed = False
@@ -531,56 +608,73 @@ def import_bulk_agents(
     # Now perform the actual inserts
     seen_codes = set()
     seen_emails = set()
+    seen_national_ids = set()
 
     for idx, item in enumerate(employees):
         row_num = item.get("index", idx + 1)
         name = str(item.get("name", "")).strip()
-        email = str(item.get("email", "")).strip()
-        employee_code = str(item.get("employee_code", "")).strip()
+        email, employee_code, identity_error = _normalize_bulk_employee_identity(
+            item.get("email", ""),
+            item.get("employee_code", "")
+        )
+        try:
+            otp_email = normalize_contact_email(item.get("otp_email", ""))
+            otp_email_error = None
+        except ValueError as exc:
+            otp_email = str(item.get("otp_email", "")).strip()
+            otp_email_error = str(exc)
+        national_id_hash = hash_national_id(item.get("national_id", ""))
         campaign_name = str(item.get("campaign_name", "")).strip()
         phone_number = str(item.get("phone_number", "")).strip()
-        role = str(item.get("role", "AGENT")).strip().upper()
+        role_input = str(item.get("role", "AGENT")).strip()
+        role, role_error = _parse_bulk_onboarding_role(role_input)
         department = str(item.get("department", "")).strip()
         password = str(item.get("password", "")).strip()
 
         errors = []
         if not name:
             errors.append("Name is required.")
-        if not email:
-            errors.append("Email is required.")
-        elif "@" not in email:
-            errors.append("Invalid email format.")
-        else:
-            db_emp_email = db.query(Employee).filter(Employee.email == email).first()
+        if identity_error:
+            errors.append(identity_error)
+        if otp_email_error:
+            errors.append(otp_email_error)
+        if email and "@" in email:
+            normalized_email = email.lower()
+            db_emp_email = db.query(Employee).filter(func.lower(Employee.email) == normalized_email).first()
             if db_emp_email:
                 errors.append(f"Email '{email}' is already registered.")
-            if email in seen_emails:
+            if normalized_email in seen_emails:
                 errors.append(f"Duplicate email '{email}' in batch.")
-            seen_emails.add(email)
+            seen_emails.add(normalized_email)
 
-        if not employee_code:
-            errors.append("Employee code is required.")
-        else:
+        if employee_code:
             db_emp_code = db.query(Employee).filter(Employee.employee_code == employee_code).first()
             if db_emp_code:
                 errors.append(f"Employee code '{employee_code}' is already registered.")
             if employee_code in seen_codes:
                 errors.append(f"Duplicate employee code '{employee_code}' in batch.")
             seen_codes.add(employee_code)
+        if national_id_hash:
+            db_emp_national_id = db.query(Employee).filter(Employee.national_id_hash == national_id_hash).first()
+            if db_emp_national_id:
+                errors.append("National ID is already registered.")
+            if national_id_hash in seen_national_ids:
+                errors.append("Duplicate national ID in batch.")
+            seen_national_ids.add(national_id_hash)
 
         if campaign_name:
             db_camp = db.query(Campaign).filter(Campaign.name == campaign_name).first()
             if not db_camp:
                 errors.append(f"Campaign '{campaign_name}' does not exist.")
 
-        valid_roles = [UserRole.AGENT.value, UserRole.QA.value, UserRole.HR_MANAGER.value]
-        if role == UserRole.TEAM_LEADER.value:
-            errors.append("TEAM_LEADER is not allowed in HR bulk onboarding.")
-        elif role not in valid_roles:
-            errors.append(f"Invalid role '{role}'. Must be one of: {', '.join(valid_roles)}")
+        if role_error:
+            errors.append(role_error)
 
-        if password and len(password) < 6:
-            errors.append("Password must be at least 6 characters long.")
+        if password:
+            try:
+                validate_password_strength(password)
+            except ValueError:
+                errors.append(PASSWORD_STRENGTH_MESSAGE)
 
         if errors:
             failed_list.append(BulkEmployeeFailure(
@@ -591,16 +685,27 @@ def import_bulk_agents(
             continue
 
         if not password:
-            password = f"Welcome_{employee_code}"
+            password = get_settings().DEFAULT_EMPLOYEE_PASSWORD
+        try:
+            validate_password_strength(password)
+        except ValueError as exc:
+            failed_list.append(BulkEmployeeFailure(
+                index=row_num,
+                employee_code=employee_code,
+                error=str(exc)
+            ))
+            continue
 
         try:
             hashed_pwd = get_password_hash(password)
             db_employee = Employee(
                 name=name,
                 email=email,
+                otp_email=otp_email,
                 employee_code=employee_code,
+                national_id_hash=national_id_hash,
                 hashed_password=hashed_pwd,
-                role=UserRole(role),
+                role=role,
                 phone_number=phone_number if phone_number else None,
                 department=department if department else (campaign_name if campaign_name else None)
             )

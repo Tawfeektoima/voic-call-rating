@@ -232,7 +232,7 @@ def test_hr_manager_onboarding_and_assignment(db_session: Session):
             "name": "New HR Manager",
             "email": "new_hr_manager_role_test@example.com",
             "employee_code": "HR_MANAGER_NEW_1",
-            "password": "password123",
+            "password": "Password123!",
             "role": "HR_MANAGER"
         }
         resp = client.post("/api/admin/employees", json=payload)
@@ -247,7 +247,7 @@ def test_hr_manager_onboarding_and_assignment(db_session: Session):
                 "email": "bulk_manager_test_import@example.com",
                 "employee_code": "HR_MANAGER_BULK_2",
                 "role": "HR_MANAGER",
-                "password": "password123"
+                "password": "Password123!"
             }
         ]
         resp_import = client.post("/api/hr/import", json=preview_payload)
@@ -259,3 +259,4 @@ def test_hr_manager_onboarding_and_assignment(db_session: Session):
         db_session.query(Employee).filter(Employee.email == "new_hr_manager_role_test@example.com").delete()
         db_session.commit()
         app.dependency_overrides.clear()
+

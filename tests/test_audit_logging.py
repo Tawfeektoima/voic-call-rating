@@ -112,7 +112,7 @@ def test_registration_generates_audit_event():
         json={
             "name": "Test Audit Registrant",
             "email": "test_audit_register@example.com",
-            "password": "password123",
+            "password": "Password123!",
             "role": "AGENT"
         }
     )
@@ -293,3 +293,4 @@ def test_audit_logs_immutability():
     assert response_delete_id.status_code == 404
 
     app.dependency_overrides.clear()
+

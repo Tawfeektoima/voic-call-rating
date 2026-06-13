@@ -10,18 +10,17 @@ from app.schemas import EmployeeRanking, CommonError, CallOut, EmployeePerforman
 from app.services.aggregation import get_common_weaknesses, calculate_core_kpis
 from app.routers.auth import get_current_user
 from app.models import UserRole
+from app.permissions import Permission, require_permission
 
 router = APIRouter(prefix="/api/analytics", tags=["Analytics & Dashboard"])
 
 
 def _require_people_analytics_access(current_user: Employee) -> None:
-    if current_user.role not in (UserRole.ADMIN, UserRole.QA, UserRole.HR_MANAGER):
-        raise HTTPException(status_code=403, detail="Access denied.")
+    require_permission(current_user, Permission.VIEW_GLOBAL_DASHBOARD)
 
 
 def _require_common_errors_access(current_user: Employee) -> None:
-    if current_user.role not in (UserRole.ADMIN, UserRole.HR_MANAGER):
-        raise HTTPException(status_code=403, detail="Access denied.")
+    require_permission(current_user, Permission.VIEW_BI)
 
 
 @router.get("/ranking", response_model=List[EmployeeRanking])

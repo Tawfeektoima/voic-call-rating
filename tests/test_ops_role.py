@@ -44,7 +44,7 @@ def test_ops_manager_admin_mutations_denied():
             "name": "New User",
             "email": "new.user@example.com",
             "employee_code": "NEW_USER_001",
-            "password": "password123",
+            "password": "Password123!",
             "role": "AGENT"
         })
         assert response.status_code == 403
@@ -275,7 +275,7 @@ def test_ops_manager_login_and_auth_me_success():
     
     db: Session = SessionLocal()
     try:
-        password = "opsmanagerpass123"
+        password = "Opsmanagerpass123!"
         hashed_pwd = get_password_hash(password)
         user = Employee(
             name="Login Ops Manager",
@@ -293,7 +293,7 @@ def test_ops_manager_login_and_auth_me_success():
     # Attempt Login
     response = client.post(
         "/api/auth/login",
-        json={"email": "ops_login_test@example.com", "password": "opsmanagerpass123"}
+        json={"email": "ops_login_test@example.com", "password": "Opsmanagerpass123!"}
     )
     assert response.status_code == 200
     data = response.json()
@@ -343,25 +343,26 @@ def test_ops_manager_denied_from_raw_analytics_and_audio():
         app.dependency_overrides.clear()
 
 def test_common_errors_endpoint_security():
-    """Verify auth and role restriction on the common-errors endpoint (ADMIN and HR_MANAGER only)."""
+    """Verify auth and role restriction on the common-errors endpoint (ADMIN only)."""
     # 1. Unauthenticated gets 401
     app.dependency_overrides.clear()
     assert client.get("/api/analytics/common-errors").status_code == 401
     
-    # 2. Denied roles (AGENT, QA, OPS_MANAGER) get 403
-    for mock_user in [mock_agent, mock_qa, mock_ops_manager]:
+    # 2. Denied roles (AGENT, QA, OPS_MANAGER, HR_MANAGER) get 403
+    for mock_user in [mock_agent, mock_qa, mock_ops_manager, mock_hr_manager]:
         app.dependency_overrides[get_current_user] = lambda u=mock_user: u
         try:
             assert client.get("/api/analytics/common-errors").status_code == 403
         finally:
             app.dependency_overrides.clear()
 
-    # 3. Allowed roles (ADMIN, HR_MANAGER) get 200
-    for mock_user in [mock_admin, mock_hr_manager]:
+    # 3. Allowed roles (ADMIN) get 200
+    for mock_user in [mock_admin]:
         app.dependency_overrides[get_current_user] = lambda u=mock_user: u
         try:
             assert client.get("/api/analytics/common-errors").status_code == 200
         finally:
             app.dependency_overrides.clear()
+
 
 

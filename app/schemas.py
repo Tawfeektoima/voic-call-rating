@@ -9,6 +9,7 @@ from typing import Optional, List
 
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 import json
+from app.security import validate_password_strength
 
 
 # ===========================
@@ -17,8 +18,10 @@ import json
 
 class EmployeeCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
-    email: str = Field(..., min_length=5, max_length=255)
-    password: str = Field(..., min_length=6)
+    email: Optional[str] = Field(None, max_length=255)
+    otp_email: Optional[str] = Field(None, max_length=255)
+    national_id: Optional[str] = Field(None, max_length=32)
+    password: Optional[str] = Field(None, min_length=6)
     role: str = "AGENT"
     department: Optional[str] = None
     employee_code: str = Field(..., min_length=1, max_length=50)
@@ -28,6 +31,13 @@ class EmployeeCreate(BaseModel):
     emotion_history: Optional[List[float]] = None
     phone_number: Optional[str] = None
     status: str = "active"
+
+    @field_validator("password")
+    @classmethod
+    def validate_employee_password(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None:
+            validate_password_strength(value)
+        return value
 
 
 class EmployeeUpdate(BaseModel):
@@ -54,6 +64,24 @@ class AuditEventOut(BaseModel):
     created_at: datetime
 
 
+class RoleDefinitionOut(BaseModel):
+    role: str
+    label: str
+    description: str
+    permissions: List[str] = Field(default_factory=list)
+    assignable_by_hr: bool = False
+
+
+class RolePermissionUpdate(BaseModel):
+    permissions: List[str] = Field(default_factory=list)
+    reason: Optional[str] = None
+
+
+class RolePermissionCatalogOut(BaseModel):
+    roles: List[RoleDefinitionOut]
+    available_permissions: List[str]
+
+
 
 
 
@@ -74,6 +102,7 @@ class EmployeeOut(BaseModel):
     id: int
     name: str
     email: str
+    otp_email: Optional[str] = None
     role: str
     department: Optional[str]
     employee_code: str
@@ -112,15 +141,51 @@ class UserRegister(BaseModel):
     password: str
     role: str = "AGENT"
 
+    @field_validator("password")
+    @classmethod
+    def validate_register_password(cls, value: str) -> str:
+        validate_password_strength(value)
+        return value
+
 class UserLogin(BaseModel):
-    email: str
+    employee_code: Optional[str] = None
+    email: Optional[str] = None
     password: str
+
+    @model_validator(mode="after")
+    def identifier_required(self):
+        if not (self.employee_code or self.email):
+            raise ValueError("Employee code is required.")
+        return self
+
+
+class UserOtpVerify(BaseModel):
+    challenge_id: int
+    otp_code: str = Field(..., min_length=4, max_length=10)
+
+
+class PasswordResetRequest(BaseModel):
+    email: str
+    national_id: str = Field(..., min_length=4, max_length=32)
+
+
+class PasswordResetConfirm(BaseModel):
+    challenge_id: int
+    otp_code: str = Field(..., min_length=4, max_length=10)
+    new_password: str = Field(..., min_length=6)
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, value: str) -> str:
+        validate_password_strength(value)
+        return value
 
 class MeResponse(BaseModel):
     id: int
     name: str
     campaign_id: Optional[int] = None
     role: str
+    permissions: List[str] = Field(default_factory=list)
     email: Optional[str] = None
     avatar: Optional[str] = None
     account_status: str = "active"

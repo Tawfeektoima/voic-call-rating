@@ -6,6 +6,7 @@ from app.main import app
 from app.database import SessionLocal
 from app.models import Employee, UserRole, EmployeeStatus, SystemLog, AuditEvent
 from app.routers.auth import get_current_user
+from app.security import verify_password
 
 client = TestClient(app)
 
@@ -13,6 +14,7 @@ def cleanup_test_employees():
     db: Session = SessionLocal()
     try:
         db.query(Employee).filter(Employee.email.like("test_mgmt_%")).delete(synchronize_session=False)
+        db.query(Employee).filter(Employee.employee_code == "MGMT_DEFAULT_PASSWORD").delete(synchronize_session=False)
         db.query(SystemLog).filter(SystemLog.error_type.in_(["ROLE_CHANGE", "STATUS_CHANGE"])).delete(synchronize_session=False)
         db.query(AuditEvent).filter(AuditEvent.target.like("Employee test_mgmt_%")).delete(synchronize_session=False)
         db.commit()
@@ -55,6 +57,40 @@ def seed_test_employees():
         db.commit()
     finally:
         db.close()
+
+
+def test_admin_create_employee_uses_default_hashed_password_when_omitted():
+    """Verify omitted employee password gets the configured default, stored only as a hash."""
+    app.dependency_overrides[get_current_user] = lambda: Employee(
+        id=9001,
+        name="Mock Admin User",
+        email="test_mgmt_admin@example.com",
+        role=UserRole.ADMIN,
+        employee_code="TEST_MGMT_ADMIN",
+        hashed_password="fake",
+        status="active"
+    )
+
+    response = client.post(
+        "/api/admin/employees",
+        json={
+            "name": "Default Password User",
+            "employee_code": "MGMT_DEFAULT_PASSWORD",
+            "role": "AGENT"
+        }
+    )
+    assert response.status_code == 200
+
+    db: Session = SessionLocal()
+    try:
+        employee = db.query(Employee).filter(Employee.employee_code == "MGMT_DEFAULT_PASSWORD").first()
+        assert employee is not None
+        assert employee.email == "emp-mgmt_default_password@eiacs.com"
+        assert employee.hashed_password != "Eiacs$1234#"
+        assert verify_password("Eiacs$1234#", employee.hashed_password)
+    finally:
+        db.close()
+        app.dependency_overrides.clear()
 
 def test_admin_view_employee_list_pagination():
     """Verify that skip and limit correctly paginate employee records and return total headers."""
@@ -390,3 +426,4 @@ def test_non_hr_cannot_update_employee_status():
     assert response.status_code == 403
     assert "HR managers" in response.json()["detail"]
     app.dependency_overrides.clear()
+

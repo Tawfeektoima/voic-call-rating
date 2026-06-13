@@ -2,15 +2,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 import uuid
 from app.database import get_db
-from app.models import GoldenPairCandidate, CandidateStatus, Employee, UserRole
+from app.models import GoldenPairCandidate, CandidateStatus, Employee
 from app.routers.auth import get_current_user
 from app.workers.rag_worker import collection, _get_model
+from app.permissions import Permission, require_permission
 
 router = APIRouter(prefix="/api/review", tags=["HITL Review"])
 
 def _require_review_access(current_user: Employee) -> None:
-    if current_user.role not in (UserRole.ADMIN, UserRole.QA, UserRole.HR_MANAGER):
-        raise HTTPException(status_code=403, detail="Access denied.")
+    require_permission(current_user, Permission.REVIEW_CALLS)
 
 
 @router.get("/queue")

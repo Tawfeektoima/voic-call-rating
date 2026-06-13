@@ -5,14 +5,15 @@ import {
   ShieldCheck, HelpCircle, Loader2, Search
 } from 'lucide-react';
 import { cn } from '../components/ui/utils';
-import api, { getEmployeesPaginated, updateEmployee } from '../lib/api';
-import { Agent } from '../lib/types';
+import api, { getApprovedRoles, getEmployeesPaginated, updateEmployee } from '../lib/api';
+import { Agent, RoleDefinition } from '../lib/types';
 import { useApp } from '../context/AppContext';
 
 interface AgentPreview {
   index: number;
   name: string;
   email: string;
+  otp_email?: string;
   employee_code: string;
   campaign_name: string;
   phone_number: string;
@@ -25,6 +26,16 @@ interface ImportSummary {
   valid: number;
   invalid: number;
 }
+
+const FALLBACK_ROLE_OPTIONS: RoleDefinition[] = [
+  { role: 'AGENT', label: 'Agent', description: '', permissions: [], assignable_by_hr: true },
+  { role: 'TEAM_LEADER', label: 'Team Leader', description: '', permissions: [], assignable_by_hr: true },
+  { role: 'TEAM_MANAGER', label: 'Team Manager', description: '', permissions: [], assignable_by_hr: true },
+  { role: 'HR_MANAGER', label: 'HR Manager', description: '', permissions: [], assignable_by_hr: true },
+  { role: 'QA', label: 'QA Analyst', description: '', permissions: [], assignable_by_hr: true },
+  { role: 'OPS_MANAGER', label: 'Ops Manager', description: '', permissions: [], assignable_by_hr: true },
+  { role: 'ADMIN', label: 'Administrator', description: '', permissions: [], assignable_by_hr: false },
+];
 
 export function HRManagement() {
   const { currentUser } = useApp();
@@ -47,8 +58,11 @@ export function HRManagement() {
   const [dirStatus, setDirStatus] = useState<string>('all');
   const [dirPage, setDirPage] = useState(1);
   const [updatingEmployeeId, setUpdatingEmployeeId] = useState<number | null>(null);
+  const [roleOptions, setRoleOptions] = useState<RoleDefinition[]>(FALLBACK_ROLE_OPTIONS);
 
   const LIMIT = 10;
+  const canAssignAdmin = currentUser?.role === 'admin';
+  const selectableRoles = roleOptions.filter((role) => canAssignAdmin || role.assignable_by_hr);
 
   const fetchDirectory = useCallback(async (page: number, search: string, role: string, status: string) => {
     setDirLoading(true);
@@ -77,6 +91,20 @@ export function HRManagement() {
       fetchDirectory(dirPage, dirSearch, dirRole, dirStatus);
     }
   }, [activeTab, dirPage, dirSearch, dirRole, dirStatus, fetchDirectory]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getApprovedRoles()
+      .then((roles) => {
+        if (!cancelled && roles.length > 0) setRoleOptions(roles);
+      })
+      .catch((err) => {
+        console.error('Failed to load role catalog:', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleUpdateRole = async (employeeId: number, newRole: string) => {
     setUpdatingEmployeeId(employeeId);
@@ -251,10 +279,9 @@ export function HRManagement() {
                   className="bg-secondary border border-border text-foreground text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-primary transition-all"
                 >
                   <option value="all">All Roles</option>
-                  <option value="admin">ADMIN</option>
-                  <option value="hr_manager">HR MANAGER</option>
-                  <option value="qa">QA</option>
-                  <option value="agent">AGENT</option>
+                  {roleOptions.map((role) => (
+                    <option key={role.role} value={role.role.toLowerCase()}>{role.label}</option>
+                  ))}
                 </select>
               </div>
 
@@ -300,6 +327,11 @@ export function HRManagement() {
                   </thead>
                   <tbody className="divide-y divide-border">
                     {employees.map((agent) => {
+                      const agentRole = (agent.role || 'AGENT').toLowerCase();
+                      const currentRoleOption = roleOptions.find((role) => role.role.toLowerCase() === agentRole);
+                      const rowRoleOptions = selectableRoles.some((role) => role.role.toLowerCase() === agentRole)
+                        ? selectableRoles
+                        : [currentRoleOption, ...selectableRoles].filter(Boolean) as RoleDefinition[];
                       const isSelf = currentUser?.id === agent.id || currentUser?.email === agent.email;
                       return (
                         <tr key={agent.id} className={cn("hover:bg-secondary/20 transition-all", agent.status !== 'active' && "bg-red-500/5")}>
@@ -318,15 +350,14 @@ export function HRManagement() {
                           <td className="px-5 py-3 text-xs text-muted-foreground">{agent.department || 'N/A'}</td>
                           <td className="px-5 py-3">
                             <select
-                              value={agent.role.toLowerCase()}
+                              value={agentRole}
                               disabled={isSelf || updatingEmployeeId === agent.id}
                               onChange={(e) => handleUpdateRole(agent.id, e.target.value)}
                               className="bg-secondary border border-border text-foreground text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                              <option value="admin">ADMIN</option>
-                              <option value="hr_manager">HR MANAGER</option>
-                              <option value="qa">QA</option>
-                              <option value="agent">AGENT</option>
+                              {rowRoleOptions.map((role) => (
+                                <option key={role.role} value={role.role.toLowerCase()}>{role.label}</option>
+                              ))}
                             </select>
                           </td>
                           <td className="px-5 py-3">

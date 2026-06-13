@@ -42,7 +42,7 @@ def test_admin_can_create_team_leader():
             "name": "Team Leader Alice",
             "email": "tl_alice@example.com",
             "employee_code": "TL_ALICE_001",
-            "password": "password123",
+            "password": "Password123!",
             "role": "TEAM_LEADER"
         })
         assert response.status_code == 200, f"Expected 200, got {response.status_code}"
@@ -107,7 +107,7 @@ def test_hr_bulk_preview_rejects_team_leader():
     try:
         csv_content = (
             "name,email,employee_code,role,password\n"
-            "Alice Leader,alice_tl@example.com,TL_CSV_01,TEAM_LEADER,password123\n"
+            "Alice Leader,alice_tl@example.com,TL_CSV_01,TEAM_LEADER,Password123!\n"
         )
         files = {"file": ("agents.csv", csv_content, "text/csv")}
         response = client.post("/api/hr/preview", files=files)
@@ -130,7 +130,7 @@ def test_hr_bulk_import_rejects_team_leader():
             "email": "alice_tl@example.com",
             "employee_code": "TL_CSV_01",
             "role": "TEAM_LEADER",
-            "password": "password123"
+            "password": "Password123!"
         }]
         response = client.post("/api/hr/import", json=payload)
         assert response.status_code == 200
@@ -140,3 +140,4 @@ def test_hr_bulk_import_rejects_team_leader():
         assert "TEAM_LEADER is not allowed in HR bulk onboarding." in data["failed"][0]["error"]
     finally:
         app.dependency_overrides.clear()
+

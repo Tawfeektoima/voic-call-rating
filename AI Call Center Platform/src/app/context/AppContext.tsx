@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserRole, CurrentUser } from '../lib/types';
 import { getCurrentUser } from '../lib/api';
+import { getPermissionsForRole } from '../lib/roles';
 import { Loader2 } from 'lucide-react';
 
 interface AppContextType {
@@ -41,6 +42,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           name: data.name,
           email: data.email || '',
           role: normalizedRole,
+          permissions: data.permissions?.length ? data.permissions : getPermissionsForRole(normalizedRole),
           avatar: data.avatar || '',
           account_status: data.account_status || data.status || 'active',
         };
@@ -65,7 +67,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const normalizedRole = role.toLowerCase() as UserRole;
     setUserRoleState(normalizedRole);
     if (currentUser) {
-      const updated = { ...currentUser, role: normalizedRole };
+      const updated = { ...currentUser, role: normalizedRole, permissions: getPermissionsForRole(normalizedRole) };
       setCurrentUser(updated);
       localStorage.setItem('user', JSON.stringify(updated));
     }

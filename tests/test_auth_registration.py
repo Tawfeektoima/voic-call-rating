@@ -44,7 +44,7 @@ def test_unauthenticated_registration_rejected():
             json={
                 "name": "Register Test User",
                 "email": "test_reg_unauth@example.com",
-                "password": "password123",
+                "password": "Password123!",
                 "role": "AGENT"
             }
         )
@@ -62,7 +62,7 @@ def test_non_admin_register_admin_rejected():
             json={
                 "name": "Exploit User",
                 "email": "test_reg_exploit@example.com",
-                "password": "password123",
+                "password": "Password123!",
                 "role": "ADMIN"
             }
         )
@@ -82,7 +82,7 @@ def test_non_admin_register_other_role_rejected():
             json={
                 "name": "QA User",
                 "email": "test_reg_qa@example.com",
-                "password": "password123",
+                "password": "Password123!",
                 "role": "QA"
             }
         )
@@ -102,7 +102,7 @@ def test_admin_register_valid_role_permitted():
             json={
                 "name": "QA New User",
                 "email": "test_reg_valid_qa@example.com",
-                "password": "password123",
+                "password": "Password123!",
                 "role": "QA"
             }
         )
@@ -117,7 +117,7 @@ def test_admin_register_valid_role_permitted():
             json={
                 "name": "Admin New User",
                 "email": "test_reg_valid_admin@example.com",
-                "password": "password123",
+                "password": "Password123!",
                 "role": "ADMIN"
             }
         )
@@ -138,7 +138,7 @@ def test_non_admin_registration_rejected():
             json={
                 "name": "Agent User 1",
                 "email": "test_reg_agent1@example.com",
-                "password": "password123",
+                "password": "Password123!",
                 "role": "AGENT"
             }
         )
@@ -147,3 +147,25 @@ def test_non_admin_registration_rejected():
     finally:
         cleanup_test_employees()
         app.dependency_overrides.clear()
+
+
+def test_admin_register_weak_password_rejected():
+    """Verify weak passwords are rejected during registration."""
+    app.dependency_overrides[get_current_user] = lambda: mock_admin
+    cleanup_test_employees()
+    try:
+        response = client.post(
+            "/api/auth/register",
+            json={
+                "name": "Weak Password User",
+                "email": "test_reg_weak@example.com",
+                "password": "password123",
+                "role": "AGENT"
+            }
+        )
+        assert response.status_code == 422
+        assert "uppercase" in str(response.json()).lower()
+    finally:
+        cleanup_test_employees()
+        app.dependency_overrides.clear()
+

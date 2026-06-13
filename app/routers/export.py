@@ -14,10 +14,9 @@ from app.models import Call, Campaign, UserRole, Employee
 from app.routers.auth import get_current_user
 from app.services.export import ExportService
 from app.services.audit import log_audit_event
+from app.permissions import Permission, has_permission
 
 router = APIRouter(prefix="/api/export", tags=["Data Export"])
-
-ALLOWED_EXPORT_ROLES = [UserRole.ADMIN, UserRole.HR_MANAGER, UserRole.QA]
 
 def _export_filters_summary(
     campaign_id: Optional[int] = None,
@@ -147,7 +146,7 @@ def export_calls_csv(
     """
     Export all calls metadata to a streamable CSV.
     """
-    if current_user.role not in ALLOWED_EXPORT_ROLES:
+    if not has_permission(current_user, Permission.EXPORT_DATA):
         filters_str = _export_filters_summary(campaign_id, department, start_date, end_date, agent_role)
         _deny_export(db, current_user, "CSV Export", filters_str)
 
@@ -231,7 +230,7 @@ def export_dataset_xlsx(
     Includes multi-table joins, JSON flattening, acoustic emotion %,
     temporal features, and formatted headers (Task 64).
     """
-    if current_user.role not in ALLOWED_EXPORT_ROLES:
+    if not has_permission(current_user, Permission.EXPORT_DATA):
         filters_str = _export_filters_summary(campaign_id, department, start_date, end_date, agent_role)
         _deny_export(db, current_user, "XLSX Export", filters_str)
 
@@ -292,7 +291,7 @@ def export_transcripts_zip(
     """
     Zip all transcripts matching the filters.
     """
-    if current_user.role not in ALLOWED_EXPORT_ROLES:
+    if not has_permission(current_user, Permission.EXPORT_DATA):
         filters_str = _export_filters_summary(campaign_id, department, start_date, end_date, agent_role)
         _deny_export(db, current_user, "ZIP Transcripts Export", filters_str)
 

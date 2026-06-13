@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { UserRole } from '../../lib/types';
-import { ROLE_GRADIENT_COLORS, ROLE_LABELS } from '../../lib/roles';
+import { Permission, PERMISSIONS, ROLE_GRADIENT_COLORS, ROLE_LABELS, hasPermission } from '../../lib/roles';
 import { cn } from '../ui/utils';
 
 interface NavItemConfig {
@@ -14,27 +14,29 @@ interface NavItemConfig {
   label: string;
   agentLabel?: string;
   icon: React.ElementType;
-  roles: UserRole[];
+  permission?: Permission;
+  anyPermissions?: Permission[];
   /** Use NavLink `end` so the root '/' doesn't match all child routes. */
   end?: boolean;
 }
 
 const navItems: NavItemConfig[] = [
-  { path: '/',               label: 'Dashboard',      agentLabel: 'My Dashboard', icon: LayoutDashboard, roles: [UserRole.ADMIN, UserRole.QA, UserRole.AGENT, UserRole.HR_MANAGER], end: true },
-  { path: '/campaigns',      label: 'Campaigns',                                  icon: Radio,            roles: [UserRole.ADMIN, UserRole.QA, UserRole.HR_MANAGER] },
-  { path: '/calls',          label: 'Call Explorer',  agentLabel: 'My Calls',     icon: Phone,            roles: [UserRole.ADMIN, UserRole.QA, UserRole.AGENT, UserRole.HR_MANAGER] },
-  { path: '/intelligence',   label: 'BI Hub',                                     icon: BarChart3,         roles: [UserRole.ADMIN, UserRole.HR_MANAGER] },
-  { path: '/success-library',label: 'Success Library',                            icon: Star,             roles: [UserRole.ADMIN, UserRole.QA, UserRole.AGENT, UserRole.HR_MANAGER] },
-  { path: '/agents/me',      label: 'Agent Profiles', agentLabel: 'My Profile',   icon: Users,            roles: [UserRole.ADMIN, UserRole.QA, UserRole.AGENT, UserRole.HR_MANAGER] },
-  { path: '/data-center',    label: 'Data Center',                                icon: Database,          roles: [UserRole.ADMIN, UserRole.HR_MANAGER, UserRole.QA] },
-  { path: '/hr',             label: 'HR Dashboard',                               icon: ShieldAlert,       roles: [UserRole.ADMIN, UserRole.HR_MANAGER, UserRole.QA] },
-  { path: '/hr/agents',      label: 'Agent Directory',                            icon: UserCircle,        roles: [UserRole.ADMIN, UserRole.HR_MANAGER] },
-  { path: '/team-leader',    label: 'Team Overview',                              icon: LayoutDashboard,   roles: [UserRole.ADMIN, UserRole.TEAM_LEADER] },
-  { path: '/team-leader/agents', label: 'Team Agents',                            icon: Users,             roles: [UserRole.ADMIN, UserRole.TEAM_LEADER] },
-  { path: '/team-leader/calls', label: 'Team Calls',                              icon: Phone,             roles: [UserRole.ADMIN, UserRole.TEAM_LEADER] },
-  { path: '/team-leader/kpis',  label: 'Team KPIs',                               icon: BarChart3,         roles: [UserRole.ADMIN, UserRole.TEAM_LEADER] },
-  { path: '/notes',          label: 'Workflow Notes',  agentLabel: 'My Notes',    icon: Inbox,             roles: [UserRole.ADMIN, UserRole.QA, UserRole.AGENT, UserRole.HR_MANAGER, UserRole.OPS_MANAGER, UserRole.TEAM_MANAGER, UserRole.TEAM_LEADER] },
-  { path: '/system-health',  label: 'System Health',                              icon: Activity,          roles: [UserRole.ADMIN] },
+  { path: '/',               label: 'Dashboard',      agentLabel: 'My Dashboard', icon: LayoutDashboard, anyPermissions: [PERMISSIONS.VIEW_OWN_DASHBOARD, PERMISSIONS.VIEW_GLOBAL_DASHBOARD], end: true },
+  { path: '/campaigns',      label: 'Campaigns',                                  icon: Radio,            permission: PERMISSIONS.VIEW_CAMPAIGNS },
+  { path: '/calls',          label: 'Call Explorer',  agentLabel: 'My Calls',     icon: Phone,            anyPermissions: [PERMISSIONS.VIEW_OWN_CALLS, PERMISSIONS.VIEW_RAW_CALLS] },
+  { path: '/intelligence',   label: 'BI Hub',                                     icon: BarChart3,         permission: PERMISSIONS.VIEW_BI },
+  { path: '/success-library',label: 'Success Library',                            icon: Star,             permission: PERMISSIONS.VIEW_SUCCESS_LIBRARY },
+  { path: '/agents/me',      label: 'Agent Profiles', agentLabel: 'My Profile',   icon: Users,            anyPermissions: [PERMISSIONS.VIEW_OWN_PROFILE, PERMISSIONS.VIEW_AGENT_PROFILES] },
+  { path: '/data-center',    label: 'Data Center',                                icon: Database,          permission: PERMISSIONS.VIEW_DATA_CENTER },
+  { path: '/hr',             label: 'HR Dashboard',                               icon: ShieldAlert,       permission: PERMISSIONS.VIEW_HR_DASHBOARD },
+  { path: '/hr/agents',      label: 'Agent Directory',                            icon: UserCircle,        permission: PERMISSIONS.VIEW_EMPLOYEES },
+  { path: '/team-leader',    label: 'Team Overview',                              icon: LayoutDashboard,   permission: PERMISSIONS.VIEW_TEAM_LEADER_WORKSPACE },
+  { path: '/team-leader/agents', label: 'Team Agents',                            icon: Users,             permission: PERMISSIONS.VIEW_TEAM_LEADER_WORKSPACE },
+  { path: '/team-leader/calls', label: 'Team Calls',                              icon: Phone,             permission: PERMISSIONS.VIEW_TEAM_LEADER_WORKSPACE },
+  { path: '/team-leader/kpis',  label: 'Team KPIs',                               icon: BarChart3,         permission: PERMISSIONS.VIEW_TEAM_LEADER_WORKSPACE },
+  { path: '/team-manager',   label: 'Manager Workspace',                          icon: Users,             permission: PERMISSIONS.VIEW_TEAM_MANAGER_WORKSPACE },
+  { path: '/notes',          label: 'Workflow Notes',  agentLabel: 'My Notes',    icon: Inbox,             permission: PERMISSIONS.VIEW_NOTES },
+  { path: '/system-health',  label: 'System Health',                              icon: Activity,          permission: PERMISSIONS.VIEW_SYSTEM_HEALTH },
 ];
 
 export function Sidebar() {
@@ -46,7 +48,15 @@ export function Sidebar() {
     window.location.href = '/login';
   };
 
-  const visibleItems = navItems.filter(item => item.roles.includes(userRole));
+  const visibleItems = navItems.filter((item) => {
+    if (item.permission) {
+      return hasPermission(userRole, item.permission, currentUser?.permissions);
+    }
+    if (item.anyPermissions) {
+      return item.anyPermissions.some((permission) => hasPermission(userRole, permission, currentUser?.permissions));
+    }
+    return false;
+  });
   const gradientClass = ROLE_GRADIENT_COLORS[userRole] ?? 'from-slate-500 to-slate-700';
 
   return (

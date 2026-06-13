@@ -18,8 +18,17 @@ export interface CurrentUser {
   name: string;
   email: string;
   role: UserRole;
+  permissions?: string[];
   avatar: string;
   account_status?: string;
+}
+
+export interface RoleDefinition {
+  role: string;
+  label: string;
+  description: string;
+  permissions: string[];
+  assignable_by_hr: boolean;
 }
 
 export enum CallStatus {
@@ -61,6 +70,9 @@ export interface TranscriptSegment {
 export interface Agent {
   id: number;
   name: string;
+  email?: string;
+  otp_email?: string;
+  role?: string;
   department: string | null;
   employee_code: string;
   avatar?: string;
@@ -541,4 +553,141 @@ export interface TeamLeaderKpisOut {
   average_qa_score: number;
   average_conversion_rate: number;
   attendance_rate: number;
+}
+
+export interface TeamManagerAlertOut {
+  type: string;
+  message: string;
+  severity: string;
+  team_id?: number | null;
+  agent_id?: number | null;
+}
+
+export interface TeamManagerTeamRowOut {
+  team_id: number;
+  team_name: string;
+  campaign_id?: number | null;
+  campaign_name?: string | null;
+  leader_id?: number | null;
+  leader_name?: string | null;
+  agent_count: number;
+  sales: number;
+  revenue: number;
+  conversion_rate: number;
+  average_qa_score: number;
+  attendance_rate: number;
+}
+
+export interface TeamManagerDashboardOut {
+  total_teams: number;
+  total_agents: number;
+  total_sales: number;
+  total_revenue: number;
+  average_conversion_rate: number;
+  average_qa_score: number;
+  attendance_rate: number;
+  teams: TeamManagerTeamRowOut[];
+  alerts: TeamManagerAlertOut[];
+}
+
+export interface TeamManagerAgentRowOut {
+  agent_id: number;
+  agent_name: string;
+  email: string;
+  team_id: number;
+  team_name: string;
+  campaign_id?: number | null;
+  campaign_name?: string | null;
+  sales: number;
+  revenue: number;
+  conversion_rate: number;
+  qa_score?: number | null;
+  attendance_rate?: number | null;
+  status: string;
+}
+
+export interface TeamManagerSalesRow {
+  team_id: number;
+  team_name: string;
+  sales: number;
+  total_calls: number;
+}
+
+export interface TeamManagerSalesReportOut {
+  teams: TeamManagerSalesRow[];
+  total_sales: number;
+}
+
+export interface TeamManagerRevenueRow {
+  team_id: number;
+  team_name: string;
+  revenue: number;
+}
+
+export interface TeamManagerRevenueReportOut {
+  teams: TeamManagerRevenueRow[];
+  total_revenue: number;
+}
+
+export interface TeamManagerConversionRow {
+  team_id: number;
+  team_name: string;
+  sales: number;
+  total_calls: number;
+  conversion_rate: number;
+}
+
+export interface TeamManagerConversionReportOut {
+  teams: TeamManagerConversionRow[];
+  average_conversion_rate: number;
+}
+
+export interface TeamManagerAttendanceRow {
+  agent_id: number;
+  agent_name: string;
+  attendance_date: string;
+  status: string;
+  scheduled_minutes?: number | null;
+  worked_minutes?: number | null;
+  late_minutes?: number | null;
+}
+
+export interface TeamManagerAttendanceReportOut {
+  records: TeamManagerAttendanceRow[];
+  attendance_rate: number;
+}
+
+export interface TeamManagerKpisOut {
+  month: string;
+  total_sales: number;
+  total_revenue: number;
+  average_qa_score: number;
+  average_conversion_rate: number;
+  attendance_rate: number;
+}
+
+export interface AgentTransferRequestOut {
+  id: number;
+  agent_id: number;
+  agent_name?: string | null;
+  from_team_id: number;
+  from_team_name?: string | null;
+  to_team_id?: number | null;
+  to_team_name?: string | null;
+  requested_by_id: number;
+  requested_by_name?: string | null;
+  reviewed_by_id?: number | null;
+  reviewed_by_name?: string | null;
+  status: string;
+  reason: string;
+  review_note?: string | null;
+  created_at: string;
+  reviewed_at?: string | null;
+}
+
+export interface AgentTransferRequestCreate {
+  agent_id: number;
+  from_team_id: number;
+  to_team_id?: number | null;
+  reason: string;
 }

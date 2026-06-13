@@ -17,6 +17,7 @@ from app.worker import process_call_audio_task
 from app.routers.auth import get_current_user
 from app.models import UserRole, AgentViolation
 from app.services.audit import log_audit_event
+from app.permissions import Permission, has_permission, require_permission
 
 settings = get_settings()
 
@@ -35,7 +36,7 @@ def _remove_file_if_exists(file_path: str):
 
 
 def _can_view_raw_call(current_user: Employee, employee_id: int) -> bool:
-    if current_user.role in (UserRole.ADMIN, UserRole.QA, UserRole.HR_MANAGER):
+    if has_permission(current_user, Permission.VIEW_RAW_CALLS):
         return True
     return current_user.role == UserRole.AGENT and current_user.id == employee_id
 
@@ -404,8 +405,7 @@ def review_call(
     current_user: Employee = Depends(get_current_user)
 ):
     """Update a call with supervisor override score and notes."""
-    if current_user.role not in (UserRole.ADMIN, UserRole.QA, UserRole.HR_MANAGER):
-        raise HTTPException(status_code=403, detail="Access denied.")
+    require_permission(current_user, Permission.REVIEW_CALLS)
 
     call = db.query(Call).filter(Call.id == call_id).first()
     if not call:
@@ -457,9 +457,7 @@ def update_lead_status(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
-    # Role Check
-    if current_user.role == UserRole.AGENT:
-        raise HTTPException(status_code=403, detail="Agents cannot update lead status.")
+    require_permission(current_user, Permission.UPDATE_LEADS, detail="Access denied.")
 
     call = db.query(Call).filter(Call.id == call_id).first()
     if not call:
