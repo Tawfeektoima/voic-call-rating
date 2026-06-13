@@ -12,6 +12,12 @@ import { SystemHealth } from './pages/SystemHealth';
 import { HRDashboard } from './pages/HRDashboard';
 import { HRManagement } from './pages/HRManagement';
 import { Login } from './pages/Login';
+import { NotesInbox } from './pages/NotesInbox';
+import { NoteThread } from './pages/NoteThread';
+import { TeamLeaderDashboard } from './pages/TeamLeaderDashboard';
+import { TeamLeaderAgents } from './pages/TeamLeaderAgents';
+import { TeamLeaderCalls } from './pages/TeamLeaderCalls';
+import { TeamLeaderKpis } from './pages/TeamLeaderKpis';
 import { RoleGuard } from './components/auth/RoleGuard';
 import { UserRole } from './lib/types';
 
@@ -44,6 +50,12 @@ export const router = createBrowserRouter([
       { path: 'system-health', element: <RoleGuard allowedRoles={[UserRole.ADMIN]}><SystemHealth /></RoleGuard> },
       { path: 'hr', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.HR_MANAGER, UserRole.QA]}><HRDashboard /></RoleGuard> },
       { path: 'hr/agents', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.HR_MANAGER]}><HRManagement /></RoleGuard> },
+      { path: 'team-leader', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.TEAM_LEADER]}><TeamLeaderDashboard /></RoleGuard> },
+      { path: 'team-leader/agents', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.TEAM_LEADER]}><TeamLeaderAgents /></RoleGuard> },
+      { path: 'team-leader/calls', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.TEAM_LEADER]}><TeamLeaderCalls /></RoleGuard> },
+      { path: 'team-leader/kpis', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.TEAM_LEADER]}><TeamLeaderKpis /></RoleGuard> },
+      { path: 'notes', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.QA, UserRole.AGENT, UserRole.HR_MANAGER, UserRole.OPS_MANAGER, UserRole.TEAM_MANAGER, UserRole.TEAM_LEADER]}><NotesInbox /></RoleGuard> },
+      { path: 'notes/:noteId', element: <RoleGuard allowedRoles={[UserRole.ADMIN, UserRole.QA, UserRole.AGENT, UserRole.HR_MANAGER, UserRole.OPS_MANAGER, UserRole.TEAM_MANAGER, UserRole.TEAM_LEADER]}><NoteThread /></RoleGuard> },
       { path: '*', Component: NotFound },
     ],
   },

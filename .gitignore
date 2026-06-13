@@ -1,8 +1,9 @@
-﻿.env
+.env
 .env.docker
 *.env
 __pycache__/
 *.pyc
+.pytest_cache/
 uploads/
 .venv/
 *.egg-info/
@@ -11,12 +12,14 @@ dist/
 build/
 .DS_Store
 *.log
+.runtime/
+call_rating.db
+local_chroma_db/
+
 # Private keys
 *.pem
 
-
 # Audio and media files
-uploads/
 *.mp3
 *.wav
 *.m4a
@@ -24,8 +27,7 @@ uploads/
 
 # Repository snapshots
 repomix-output*.xml
-+
-+# Local utility scratch scripts
-+scripts/scratch/*.py
-+!scripts/scratch/.gitkeep
-+
+
+# Local utility scratch scripts
+scripts/scratch/*.py
+!scripts/scratch/.gitkeep

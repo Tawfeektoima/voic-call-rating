@@ -7,6 +7,24 @@ import asyncio
 import io
 import wave
 import os
+import gc
+
+try:
+    import torch
+except Exception:
+    torch = None
+
+
+def _flush_transcription_resources():
+    try:
+        transcriber.release_resources()
+    except Exception as e:
+        print(f"[Flush Cleanup] Transcriber cleanup warning: {e}")
+
+    gc.collect()
+    if torch is not None and hasattr(torch, "cuda") and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
 
 async def _assemble_agent_wav(session_id: str) -> str | None:
     """
@@ -71,6 +89,7 @@ async def flush_live_session(session_id: str, db: Session):
             except Exception as trans_err:
                 print(f"[Flush {session_id}] Agent transcription failed: {str(trans_err)}")
             finally:
+                _flush_transcription_resources()
                 if os.path.exists(agent_wav_path):
                     os.remove(agent_wav_path)
 

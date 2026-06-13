@@ -12,7 +12,7 @@ import enum
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Column, Integer, String, Float, Text, DateTime,
+    Column, Integer, String, Float, Text, DateTime, Date,
     ForeignKey, Enum as SAEnum, JSON, Boolean, Index,
 )
 from sqlalchemy.orm import relationship
@@ -61,6 +61,25 @@ class UserRole(str, enum.Enum):
     QA      = "QA"
     ADMIN   = "ADMIN"
     HR_MANAGER = "HR_MANAGER"
+    OPS_MANAGER = "OPS_MANAGER"
+    TEAM_MANAGER = "TEAM_MANAGER"
+    TEAM_LEADER = "TEAM_LEADER"
+
+
+class RoleNoteVisibility(str, enum.Enum):
+    INTERNAL = "INTERNAL"
+    RECIPIENT_VISIBLE = "RECIPIENT_VISIBLE"
+    AGENT_VISIBLE = "AGENT_VISIBLE"
+
+
+class RoleNoteStatus(str, enum.Enum):
+    OPEN = "OPEN"
+    READ = "READ"
+    IN_PROGRESS = "IN_PROGRESS"
+    WAITING_REPLY = "WAITING_REPLY"
+    RESOLVED = "RESOLVED"
+    ARCHIVED = "ARCHIVED"
+    DELETED = "DELETED"
 
 
 class EmployeeStatus(str, enum.Enum):
@@ -109,6 +128,7 @@ class Employee(Base):
     mastery_stats = relationship("AgentMasteryStats", back_populates="employee", uselist=False, cascade="all, delete-orphan")
     coaching_sessions = relationship("CoachingSession", back_populates="employee", cascade="all, delete-orphan")
     violations = relationship("AgentViolation", back_populates="employee", cascade="all, delete-orphan")
+    attendance_records = relationship("AttendanceRecord", back_populates="employee", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Employee id={self.id} name={self.name!r}>"
@@ -130,6 +150,7 @@ class Campaign(Base):
     # Relationships
     calls = relationship("Call", back_populates="campaign", lazy="dynamic")
     violations = relationship("AgentViolation", back_populates="campaign", cascade="all, delete-orphan")
+    operational_targets = relationship("OperationalTarget", back_populates="campaign", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Campaign id={self.id} name={self.name!r}>"
@@ -470,5 +491,189 @@ class AuditEvent(Base):
 
     # Relationships
     actor         = relationship("Employee", foreign_keys=[actor_id])
+
+
+class AttendanceRecord(Base):
+    __tablename__ = "attendance_records"
+    __table_args__ = (
+        Index("ix_attendance_records_employee_date", "employee_id", "attendance_date"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    attendance_date = Column(Date, nullable=False, index=True)
+    status = Column(String(50), nullable=False)
+    scheduled_minutes = Column(Integer, nullable=True)
+    worked_minutes = Column(Integer, nullable=True)
+    late_minutes = Column(Integer, nullable=True)
+    absence_reason = Column(Text, nullable=True)
+    source = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+    # Relationships
+    employee = relationship("Employee", back_populates="attendance_records")
+
+    def __repr__(self):
+        return f"<AttendanceRecord id={self.id} employee_id={self.employee_id} date={self.attendance_date}>"
+
+
+class OperationalTarget(Base):
+    __tablename__ = "operational_targets"
+    __table_args__ = (
+        Index("ix_operational_targets_camp_metric_seg", "campaign_id", "metric_name", "segment"),
+        Index("ix_operational_targets_effective_dates", "effective_from", "effective_to"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=True, index=True) # Nullable for company-wide scope
+    metric_name = Column(String(255), nullable=False, index=True)
+    segment = Column(String(100), nullable=True)
+    target_value = Column(Float, nullable=False)
+    warning_threshold = Column(Float, nullable=True)
+    critical_threshold = Column(Float, nullable=True)
+    effective_from = Column(DateTime(timezone=True), nullable=False)
+    effective_to = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    # Relationships
+    campaign = relationship("Campaign", back_populates="operational_targets")
+
+    def __repr__(self):
+        return f"<OperationalTarget id={self.id} campaign_id={self.campaign_id} metric={self.metric_name!r}>"
+
+
+class Team(Base):
+    __tablename__ = "teams"
+
+    id          = Column(Integer, primary_key=True)
+    name        = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=True, index=True)
+    manager_id  = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    leader_id   = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    is_active   = Column(Boolean, nullable=False, default=True, index=True)
+    created_at  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+    # Relationships
+    campaign = relationship("Campaign", foreign_keys=[campaign_id])
+    manager  = relationship("Employee", foreign_keys=[manager_id])
+    leader   = relationship("Employee", foreign_keys=[leader_id])
+    assignments = relationship("EmployeeTeamAssignment", back_populates="team", cascade="all, delete-orphan")
+
+
+class EmployeeTeamAssignment(Base):
+    __tablename__ = "employee_team_assignments"
+
+    id            = Column(Integer, primary_key=True)
+    employee_id   = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    team_id       = Column(Integer, ForeignKey("teams.id"), nullable=False, index=True)
+    assigned_at   = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    ended_at      = Column(DateTime(timezone=True), nullable=True)
+    is_active     = Column(Boolean, nullable=False, default=True)
+    created_by_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
+
+    __table_args__ = (
+        Index("ix_employee_team_assignments_employee_active", "employee_id", "is_active"),
+        Index("ix_employee_team_assignments_team_active", "team_id", "is_active"),
+    )
+
+    # Relationships
+    employee = relationship("Employee", foreign_keys=[employee_id])
+    team     = relationship("Team", back_populates="assignments", foreign_keys=[team_id])
+    created_by = relationship("Employee", foreign_keys=[created_by_id])
+
+
+class AgentTransferRequest(Base):
+    __tablename__ = "agent_transfer_requests"
+
+    id              = Column(Integer, primary_key=True)
+    agent_id        = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    from_team_id    = Column(Integer, ForeignKey("teams.id"), nullable=False, index=True)
+    to_team_id      = Column(Integer, ForeignKey("teams.id"), nullable=True, index=True)
+    requested_by_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    reviewed_by_id  = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    status          = Column(String(50), nullable=False, default="PENDING", index=True)
+    reason          = Column(Text, nullable=False)
+    review_note     = Column(Text, nullable=True)
+    created_at      = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+    reviewed_at     = Column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    agent        = relationship("Employee", foreign_keys=[agent_id])
+    from_team    = relationship("Team", foreign_keys=[from_team_id])
+    to_team      = relationship("Team", foreign_keys=[to_team_id])
+    requested_by = relationship("Employee", foreign_keys=[requested_by_id])
+    reviewed_by  = relationship("Employee", foreign_keys=[reviewed_by_id])
+
+
+class RoleNote(Base):
+    __tablename__ = "role_notes"
+
+    id                    = Column(Integer, primary_key=True)
+    sender_id             = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    recipient_id          = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    recipient_role        = Column(String(50), nullable=True, index=True)
+    visibility            = Column(SAEnum(RoleNoteVisibility), nullable=False, default=RoleNoteVisibility.INTERNAL, index=True)
+    team_id               = Column(Integer, ForeignKey("teams.id"), nullable=True, index=True)
+    campaign_id           = Column(Integer, ForeignKey("campaigns.id"), nullable=True, index=True)
+    employee_id           = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    call_id               = Column(Integer, ForeignKey("calls.id"), nullable=True, index=True)
+    parent_note_id        = Column(Integer, ForeignKey("role_notes.id"), nullable=True, index=True)
+    title                 = Column(String(255), nullable=False)
+    body                  = Column(Text, nullable=False)
+    note_type             = Column(String(50), nullable=False, default="GENERAL", index=True)
+    priority              = Column(String(50), nullable=False, default="NORMAL", index=True)
+    status                = Column(String(50), nullable=False, default="OPEN", index=True)
+    kpi_key               = Column(String(100), nullable=True)
+    kpi_label             = Column(String(255), nullable=True)
+    current_value         = Column(Float, nullable=True)
+    target_value          = Column(Float, nullable=True)
+    period_start          = Column(DateTime(timezone=True), nullable=True)
+    period_end            = Column(DateTime(timezone=True), nullable=True)
+    agent_name_snapshot   = Column(String(255), nullable=True)
+    team_name_snapshot    = Column(String(255), nullable=True)
+    campaign_name_snapshot = Column(String(255), nullable=True)
+    created_at            = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+    updated_at            = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+    read_at               = Column(DateTime(timezone=True), nullable=True)
+    resolved_at           = Column(DateTime(timezone=True), nullable=True)
+    resolved_by_id        = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    deleted_at            = Column(DateTime(timezone=True), nullable=True, index=True)
+    deleted_by_id         = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    delete_reason         = Column(Text, nullable=True)
+
+    # Relationships
+    sender      = relationship("Employee", foreign_keys=[sender_id])
+    recipient   = relationship("Employee", foreign_keys=[recipient_id])
+    team        = relationship("Team", foreign_keys=[team_id])
+    campaign    = relationship("Campaign", foreign_keys=[campaign_id])
+    employee    = relationship("Employee", foreign_keys=[employee_id])
+    call        = relationship("Call", foreign_keys=[call_id])
+    parent      = relationship("RoleNote", remote_side=[id], foreign_keys=[parent_note_id])
+    resolved_by = relationship("Employee", foreign_keys=[resolved_by_id])
+    deleted_by  = relationship("Employee", foreign_keys=[deleted_by_id])
+
+
+class KpiThresholdConfig(Base):
+    __tablename__ = "kpi_threshold_configs"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    team_id        = Column(Integer, ForeignKey("teams.id"), nullable=True, index=True)
+    campaign_id    = Column(Integer, ForeignKey("campaigns.id"), nullable=True, index=True)
+    kpi_key        = Column(String(100), nullable=False, index=True)
+    kpi_label      = Column(String(255), nullable=False)
+    threshold_type = Column(String(50), nullable=False)
+    target_value   = Column(Float, nullable=False)
+    is_active      = Column(Boolean, nullable=False, default=True, index=True)
+    created_by_id  = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    created_at     = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+    updated_at     = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+    # Relationships
+    team       = relationship("Team", foreign_keys=[team_id])
+    campaign   = relationship("Campaign", foreign_keys=[campaign_id])
+    created_by = relationship("Employee", foreign_keys=[created_by_id])
 
 

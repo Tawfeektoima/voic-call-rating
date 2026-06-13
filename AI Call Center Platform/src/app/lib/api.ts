@@ -8,7 +8,19 @@ import {
   CommonError,
   CurrentUser,
   SystemMetrics,
-  SystemAlert
+  SystemAlert,
+  RoleNote,
+  RoleNoteCreatePayload,
+  RoleNoteFilters,
+  RoleNoteRecipient,
+  RoleNoteRecipientParams,
+  RoleNoteStatusUpdatePayload,
+  RoleNoteThread,
+  TeamLeaderAgentRowOut,
+  TeamLeaderCallRowOut,
+  TeamLeaderDashboardOut,
+  TeamLeaderKpisOut,
+  TeamLeaderTeamRowOut,
 } from './types';
 
 // Create a centralized Axios instance
@@ -18,6 +30,31 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
 });
+
+export const getApiErrorMessage = (error: unknown, fallback: string): string => {
+  if (!axios.isAxiosError(error)) return fallback;
+
+  const detail = (error.response?.data as any)?.detail;
+  if (typeof detail === 'string' && detail.trim()) {
+    return detail;
+  }
+
+  if (Array.isArray(detail) && detail.length > 0) {
+    const first = detail[0];
+    if (typeof first === 'string' && first.trim()) {
+      return first;
+    }
+    if (first && typeof first === 'object' && typeof first.msg === 'string' && first.msg.trim()) {
+      return first.msg;
+    }
+  }
+
+  if (typeof (error.response?.data as any)?.message === 'string') {
+    return (error.response?.data as any).message;
+  }
+
+  return fallback;
+};
 
 // Request interceptor to add Authorization header
 api.interceptors.request.use(
@@ -202,6 +239,97 @@ export const resolveAlert = async (id: number): Promise<SystemAlert> => {
 
 export const getCurrentUser = async (): Promise<CurrentUser> => {
   const response = await api.get<CurrentUser>('/api/auth/me');
+  return response.data;
+};
+
+export const getNotesInbox = async (params?: RoleNoteFilters): Promise<RoleNote[]> => {
+  const response = await api.get<RoleNote[]>('/api/notes/inbox', { params });
+  return response.data;
+};
+
+export const getSentNotes = async (params?: RoleNoteFilters): Promise<RoleNote[]> => {
+  const response = await api.get<RoleNote[]>('/api/notes/sent', { params });
+  return response.data;
+};
+
+export const getNoteThread = async (noteId: number): Promise<RoleNoteThread> => {
+  const response = await api.get<RoleNoteThread>(`/api/notes/${noteId}`);
+  return response.data;
+};
+
+export const getNoteRecipients = async (params: RoleNoteRecipientParams): Promise<RoleNoteRecipient[]> => {
+  const response = await api.get<RoleNoteRecipient[]>('/api/notes/recipients', { params });
+  return response.data;
+};
+
+export const createNote = async (payload: RoleNoteCreatePayload): Promise<RoleNote> => {
+  const response = await api.post<RoleNote>('/api/notes', payload);
+  return response.data;
+};
+
+export const replyToNote = async (noteId: number, payload: RoleNoteCreatePayload): Promise<RoleNote> => {
+  const response = await api.post<RoleNote>(`/api/notes/${noteId}/reply`, payload);
+  return response.data;
+};
+
+export const markNoteRead = async (noteId: number): Promise<RoleNote> => {
+  const response = await api.patch<RoleNote>(`/api/notes/${noteId}/read`);
+  return response.data;
+};
+
+export const updateNoteStatus = async (noteId: number, payload: RoleNoteStatusUpdatePayload): Promise<RoleNote> => {
+  const response = await api.patch<RoleNote>(`/api/notes/${noteId}/status`, payload);
+  return response.data;
+};
+
+export const resolveNote = async (noteId: number): Promise<RoleNote> => {
+  const response = await api.patch<RoleNote>(`/api/notes/${noteId}/resolve`);
+  return response.data;
+};
+
+export const archiveNote = async (noteId: number): Promise<RoleNote> => {
+  const response = await api.patch<RoleNote>(`/api/notes/${noteId}/archive`);
+  return response.data;
+};
+
+export const deleteNote = async (noteId: number, reason: string): Promise<RoleNote> => {
+  const response = await api.delete<RoleNote>(`/api/notes/${noteId}`, { params: { reason } });
+  return response.data;
+};
+
+export const getTeamLeaderDashboard = async (): Promise<TeamLeaderDashboardOut> => {
+  const response = await api.get<TeamLeaderDashboardOut>('/api/team-leader/dashboard');
+  return response.data;
+};
+
+export const getTeamLeaderTeams = async (): Promise<TeamLeaderTeamRowOut[]> => {
+  const response = await api.get<TeamLeaderTeamRowOut[]>('/api/team-leader/teams');
+  return response.data;
+};
+
+export const getTeamLeaderAgents = async (params?: { team_id?: number }): Promise<TeamLeaderAgentRowOut[]> => {
+  const response = await api.get<TeamLeaderAgentRowOut[]>('/api/team-leader/agents', { params });
+  return response.data;
+};
+
+export const getTeamLeaderAgent = async (agentId: number): Promise<TeamLeaderAgentRowOut> => {
+  const response = await api.get<TeamLeaderAgentRowOut>(`/api/team-leader/agents/${agentId}`);
+  return response.data;
+};
+
+export const getTeamLeaderCalls = async (params?: { skip?: number; limit?: number }): Promise<{ items: TeamLeaderCallRowOut[]; total: number }> => {
+  const response = await api.get<TeamLeaderCallRowOut[]>('/api/team-leader/calls', { params });
+  const total = parseInt(response.headers['x-total-count'] || String(response.data.length), 10);
+  return { items: response.data, total };
+};
+
+export const getTeamLeaderCall = async (callId: number): Promise<TeamLeaderCallRowOut> => {
+  const response = await api.get<TeamLeaderCallRowOut>(`/api/team-leader/calls/${callId}`);
+  return response.data;
+};
+
+export const getTeamLeaderKpis = async (params?: { month?: string }): Promise<TeamLeaderKpisOut> => {
+  const response = await api.get<TeamLeaderKpisOut>('/api/team-leader/kpis', { params });
   return response.data;
 };
 

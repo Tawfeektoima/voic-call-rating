@@ -14,6 +14,16 @@ from app.models import UserRole
 router = APIRouter(prefix="/api/analytics", tags=["Analytics & Dashboard"])
 
 
+def _require_people_analytics_access(current_user: Employee) -> None:
+    if current_user.role not in (UserRole.ADMIN, UserRole.QA, UserRole.HR_MANAGER):
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+
+def _require_common_errors_access(current_user: Employee) -> None:
+    if current_user.role not in (UserRole.ADMIN, UserRole.HR_MANAGER):
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+
 @router.get("/ranking", response_model=List[EmployeeRanking])
 def get_ranking(
     top: Optional[int] = Query(None, ge=1, le=100, description="Number of top employees to fetch"),
@@ -25,9 +35,7 @@ def get_ranking(
     Get employee rankings based on average evaluation scores.
     Specify either 'top' or 'bottom'. If neither is provided, defaults to top 20.
     """
-    # Role Check: Agents cannot see the full ranking table
-    if current_user.role == UserRole.AGENT:
-        raise HTTPException(status_code=403, detail="Agents do not have access to the global ranking table.")
+    _require_people_analytics_access(current_user)
 
     # Base query: calculate average score and call count per employee
     query = (
@@ -82,11 +90,8 @@ def search_calls(
     """
     Search and filter call records.
     """
+    _require_people_analytics_access(current_user)
     query = db.query(Call)
-
-    # Role Check: Agents can only search their own calls
-    if current_user.role == UserRole.AGENT:
-        query = query.filter(Call.employee_id == current_user.id)
 
     if min_id:
         query = query.filter(Call.id >= min_id)
@@ -112,11 +117,13 @@ def search_calls(
 @router.get("/common-errors", response_model=List[CommonError])
 def get_common_errors(
     limit: int = Query(10, ge=1, le=50, description="Number of common errors to retrieve"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
 ):
     """
     Returns an aggregated list of the most frequent weaknesses resulting in score deductions.
     """
+    _require_common_errors_access(current_user)
     return get_common_weaknesses(db, limit=limit)
 
 
@@ -129,9 +136,11 @@ def get_my_performance(
     """
     Get detailed performance metrics and ranking for a specific agent.
     """
-    # Role Check: Agent can only request their own ID
-    if current_user.role == UserRole.AGENT and current_user.id != employee_id:
-        raise HTTPException(status_code=403, detail="You can only view your own performance.")
+    if current_user.role == UserRole.AGENT:
+        if current_user.id != employee_id:
+            raise HTTPException(status_code=403, detail="You can only view your own performance.")
+    else:
+        _require_people_analytics_access(current_user)
 
     # 1. Fetch Employee
     employee = db.query(Employee).filter(Employee.id == employee_id).first()
@@ -202,9 +211,11 @@ def get_agent_details(
     """
     Get basic profile details for an agent.
     """
-    # Role Check: Agents can only view themselves
-    if current_user.role == UserRole.AGENT and current_user.id != employee_id:
-        raise HTTPException(status_code=403, detail="You can only view your own profile.")
+    if current_user.role == UserRole.AGENT:
+        if current_user.id != employee_id:
+            raise HTTPException(status_code=403, detail="You can only view your own profile.")
+    else:
+        _require_people_analytics_access(current_user)
 
     agent = db.query(Employee).filter(Employee.id == employee_id).first()
     if not agent:
@@ -223,9 +234,7 @@ def get_leads(
     """
     Get all calls that have a lead status (Hot, Warm, Cold).
     """
-    # Managers/Admins only
-    if current_user.role == UserRole.AGENT:
-        raise HTTPException(status_code=403, detail="Agents cannot access the lead tracker.")
+    _require_people_analytics_access(current_user)
 
     return (
         db.query(Call)
@@ -247,6 +256,7 @@ def get_golden_moments(
     """
     Get all calls flagged as golden moments.
     """
+    _require_people_analytics_access(current_user)
     return (
         db.query(Call)
         .filter(Call.is_golden_moment == True)
@@ -267,8 +277,12 @@ def get_dashboard_kpis(
     """
     Retrieve high-level KPIs for the main dashboard.
     """
-    # Scope metrics to agent if role is AGENT
-    employee_id = current_user.id if current_user.role == UserRole.AGENT else None
+    employee_id = None
+    if current_user.role == UserRole.AGENT:
+        employee_id = current_user.id
+    else:
+        _require_people_analytics_access(current_user)
+
     kpis = calculate_core_kpis(db, date_from=date_from, date_to=date_to, employee_id=employee_id)
 
     # Weekly Trend (Last 5 days)

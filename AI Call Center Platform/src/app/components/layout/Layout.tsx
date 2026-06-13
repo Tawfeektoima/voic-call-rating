@@ -13,12 +13,18 @@ const pageTitles: Record<string, string> = {
   '/system-health':  'System Health Monitor',
   '/hr':             'HR Dashboard',
   '/hr/agents':      'Agent Directory',
+  '/team-leader':    'Team Leader Overview',
+  '/team-leader/agents': 'Team Leader Agents',
+  '/team-leader/calls':  'Team Leader Calls',
+  '/team-leader/kpis':   'Team Leader KPIs',
+  '/notes':          'Workflow Notes',
 };
 
 function getTitle(pathname: string): string {
   if (pageTitles[pathname]) return pageTitles[pathname];
   if (pathname.startsWith('/calls/'))  return 'Call Analysis Engine';
   if (pathname.startsWith('/agents/')) return 'Agent Momentum Profile';
+  if (pathname.startsWith('/notes/'))  return 'Workflow Thread';
   return 'VoiceQA Enterprise';
 }
 

@@ -8,6 +8,9 @@ export enum UserRole {
   QA = "qa",
   AGENT = "agent",
   HR_MANAGER = "hr_manager",
+  OPS_MANAGER = "ops_manager",
+  TEAM_MANAGER = "team_manager",
+  TEAM_LEADER = "team_leader",
 }
 
 export interface CurrentUser {
@@ -334,4 +337,208 @@ export interface SystemAlert {
   severity: "critical" | "warning" | "info";
   resolved: boolean;
   created_at: string;
+}
+
+export enum RoleNoteVisibility {
+  INTERNAL = "INTERNAL",
+  RECIPIENT_VISIBLE = "RECIPIENT_VISIBLE",
+  AGENT_VISIBLE = "AGENT_VISIBLE",
+}
+
+export enum RoleNoteStatus {
+  OPEN = "OPEN",
+  READ = "READ",
+  IN_PROGRESS = "IN_PROGRESS",
+  WAITING_REPLY = "WAITING_REPLY",
+  RESOLVED = "RESOLVED",
+  ARCHIVED = "ARCHIVED",
+  DELETED = "DELETED",
+}
+
+export enum RoleNoteType {
+  GENERAL = "GENERAL",
+  COACHING_NOTE = "COACHING_NOTE",
+  COACHING_ESCALATION = "COACHING_ESCALATION",
+  QA_REVIEW_REQUEST = "QA_REVIEW_REQUEST",
+  QA_DISPUTE = "QA_DISPUTE",
+  OPS_ESCALATION = "OPS_ESCALATION",
+  KPI_ALERT = "KPI_ALERT",
+  KPI_FOLLOW_UP = "KPI_FOLLOW_UP",
+  TRANSFER_CONTEXT = "TRANSFER_CONTEXT",
+  HR_COMPLIANCE = "HR_COMPLIANCE",
+  CANDIDATE_REVIEW = "CANDIDATE_REVIEW",
+  AI_DETECTION_REVIEW = "AI_DETECTION_REVIEW",
+  SYSTEM_ISSUE = "SYSTEM_ISSUE",
+}
+
+export enum RoleNotePriority {
+  LOW = "LOW",
+  NORMAL = "NORMAL",
+  HIGH = "HIGH",
+  URGENT = "URGENT",
+}
+
+export interface RoleNoteRecipient {
+  id: number;
+  name: string;
+  role: string;
+  reason?: string | null;
+}
+
+export interface KpiCatalogItem {
+  key: string;
+  label: string;
+  unit: "percentage" | "currency" | "count" | "score" | "ratio" | "duration";
+  direction: "higher_is_better" | "lower_is_better";
+  description: string;
+}
+
+export interface RoleNote {
+  id: number;
+  sender_id: number;
+  sender_name: string | null;
+  recipient_id: number | null;
+  recipient_name: string | null;
+  recipient_role: string | null;
+  visibility: string | null;
+  team_id: number | null;
+  team_name_snapshot: string | null;
+  campaign_id: number | null;
+  campaign_name_snapshot: string | null;
+  employee_id: number | null;
+  agent_name_snapshot: string | null;
+  call_id: number | null;
+  parent_note_id: number | null;
+  title: string;
+  body: string;
+  note_type: string;
+  priority: string;
+  status: string;
+  kpi_key: string | null;
+  kpi_label: string | null;
+  current_value: number | null;
+  target_value: number | null;
+  period_start: string | null;
+  period_end: string | null;
+  created_at: string;
+  updated_at: string;
+  read_at: string | null;
+  resolved_at: string | null;
+  resolved_by_id: number | null;
+  resolved_by_name: string | null;
+  deleted_at: string | null;
+  deleted_by_id: number | null;
+  delete_reason: string | null;
+}
+
+export interface RoleNoteThread {
+  note: RoleNote;
+  replies: RoleNote[];
+}
+
+export interface RoleNoteCreatePayload {
+  recipient_id?: number;
+  recipient_role?: string;
+  visibility?: RoleNoteVisibility | string;
+  team_id?: number;
+  campaign_id?: number;
+  employee_id?: number;
+  call_id?: number;
+  parent_note_id?: number;
+  title: string;
+  body: string;
+  note_type?: RoleNoteType | string;
+  priority?: RoleNotePriority | string;
+  kpi_key?: string;
+  kpi_label?: string;
+  current_value?: number;
+  target_value?: number;
+  period_start?: string;
+  period_end?: string;
+}
+
+export interface RoleNoteStatusUpdatePayload {
+  status: RoleNoteStatus | string;
+}
+
+export interface RoleNoteFilters {
+  skip?: number;
+  limit?: number;
+  status?: string;
+  note_type?: string;
+  priority?: string;
+  visibility?: string;
+}
+
+export interface RoleNoteRecipientParams {
+  note_type: string;
+  team_id?: number;
+  campaign_id?: number;
+  employee_id?: number;
+  call_id?: number;
+}
+
+export interface TeamLeaderDashboardOut {
+  team_count: number;
+  agent_count: number;
+  average_qa_score: number;
+  attendance_rate: number;
+  sales: number;
+  revenue: number;
+  conversion_rate: number;
+  pending_notes_count: number;
+  pending_transfer_requests_count: number;
+}
+
+export interface TeamLeaderTeamRowOut {
+  team_id: number;
+  team_name: string;
+  campaign_id?: number | null;
+  campaign_name?: string | null;
+  leader_id?: number | null;
+  leader_name?: string | null;
+  agent_count: number;
+  sales: number;
+  revenue: number;
+  conversion_rate: number;
+  average_qa_score: number;
+  attendance_rate: number;
+}
+
+export interface TeamLeaderAgentRowOut {
+  agent_id: number;
+  agent_name: string;
+  email: string;
+  team_id: number;
+  team_name: string;
+  campaign_id?: number | null;
+  campaign_name?: string | null;
+  sales: number;
+  revenue: number;
+  conversion_rate: number;
+  qa_score?: number | null;
+  attendance_rate?: number | null;
+  status: string;
+}
+
+export interface TeamLeaderCallRowOut {
+  id: number;
+  employee_id: number;
+  employee_name?: string | null;
+  campaign_id: number;
+  campaign_name?: string | null;
+  status: string;
+  evaluation_score?: number | null;
+  overridden_score?: number | null;
+  audio_duration?: number | null;
+  created_at: string;
+}
+
+export interface TeamLeaderKpisOut {
+  month: string;
+  total_sales: number;
+  total_revenue: number;
+  average_qa_score: number;
+  average_conversion_rate: number;
+  attendance_rate: number;
 }

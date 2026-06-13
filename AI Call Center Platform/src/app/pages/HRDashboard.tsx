@@ -13,6 +13,7 @@ import {
 } from "../hooks/useViolations";
 import { CallViolation } from "../lib/types";
 import { useApp } from "../context/AppContext";
+import { buildNotesComposeUrl } from "../lib/noteNavigation";
 
 const PENALTY_COLOR: Record<string, string> = {
   "Warning":     "text-slate-400",
@@ -94,6 +95,12 @@ function AgentViolationsInline({ employeeId }: { employeeId: number }) {
 export function HRDashboard() {
   const { userRole } = useApp();
   const navigate = useNavigate();
+  const openHrNote = (params: Record<string, string | number | undefined>) => {
+    navigate(buildNotesComposeUrl({
+      noteType: 'HR_COMPLIANCE',
+      ...params,
+    }));
+  };
   
   if (userRole !== 'admin' && userRole !== 'hr_manager' && userRole !== 'qa') {
     return (
@@ -152,6 +159,12 @@ export function HRDashboard() {
           <h1 className="text-2xl font-bold text-slate-100">HR Violations Dashboard</h1>
           <p className="text-sm text-slate-400 mt-1">Platform-wide compliance and penalty tracking</p>
         </div>
+        <button
+          onClick={() => openHrNote({ title: 'HR compliance note' })}
+          className="h-10 px-4 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium transition-colors"
+        >
+          Create HR Note
+        </button>
       </div>
 
       {/* Section 1: Stats Bar */}
@@ -247,6 +260,12 @@ export function HRDashboard() {
                       >
                         Call #{a.call_id} <ChevronRight size={10} />
                       </button>
+                      <button
+                        onClick={() => openHrNote({ callId: a.call_id, title: `HR compliance follow-up for call #${a.call_id}` })}
+                        className="text-[10px] text-primary hover:text-indigo-300 flex items-center gap-1"
+                      >
+                        Note <ChevronRight size={10} />
+                      </button>
                     </div>
                     <div className="text-[10px] text-red-400 font-medium mb-1">
                       {a.qa_alarm_reason}
@@ -291,6 +310,12 @@ export function HRDashboard() {
                         className="text-[10px] text-indigo-400 hover:text-indigo-300 font-mono flex items-center gap-1 hover:underline"
                       >
                         Call #{v.call_id} <ChevronRight size={10} />
+                      </button>
+                      <button
+                        onClick={() => openHrNote({ callId: v.call_id, title: `HR compliance note for call #${v.call_id}` })}
+                        className="text-[10px] text-primary hover:text-indigo-300 flex items-center gap-1"
+                      >
+                        Note <ChevronRight size={10} />
                       </button>
                     </div>
                     <div className="flex flex-wrap items-center gap-2 mb-2">

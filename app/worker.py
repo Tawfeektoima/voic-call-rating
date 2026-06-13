@@ -4,6 +4,7 @@ import torch
 import redis
 import json
 import psutil
+import tempfile
 from celery import Celery
 from datetime import datetime, timezone
 from app.database import SessionLocal
@@ -29,6 +30,23 @@ def force_cuda_cleanup():
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
     print("[*] CUDA memory cache cleared.")
+
+def release_worker_model_resources():
+    """
+    Free any model state that may still be hanging around after a task.
+    This matters on 4GB GPUs where even small leftovers destabilize the next job.
+    """
+    try:
+        transcriber.release_resources()
+    except Exception as e:
+        print(f"[!] Transcriber cleanup warning: {e}")
+
+    try:
+        acoustic_analyzer.release_resources()
+    except Exception as e:
+        print(f"[!] Acoustic cleanup warning: {e}")
+
+    force_cuda_cleanup()
 
 def filter_hallucinated_segments(segments: list[dict]) -> list[dict]:
     """
@@ -112,6 +130,34 @@ def check_redis_health():
     except Exception as e:
         return False, f"Broker Connection Error: {str(e)}"
 
+def check_disk_capacity():
+    """
+    AI model loading uses the Windows system drive for paging and the temp
+    directory for native library work. If either is full, CUDA/native libraries
+    can terminate the worker without raising a Python exception.
+    """
+    checks = []
+    system_root = os.environ.get("SystemDrive", "C:") + "\\"
+    temp_root = os.path.abspath(tempfile.gettempdir())
+    project_root = os.path.abspath(os.getcwd())
+
+    for label, path, minimum_free_gb in (
+        ("system drive/pagefile", system_root, 5.0),
+        ("temp drive", temp_root, 2.0),
+        ("project drive", project_root, 2.0),
+    ):
+        try:
+            usage = psutil.disk_usage(path)
+            free_gb = usage.free / (1024**3)
+            if free_gb < minimum_free_gb:
+                checks.append(f"{label} at {path} has only {free_gb:.2f} GB free; need at least {minimum_free_gb:.1f} GB")
+        except Exception as e:
+            checks.append(f"could not check {label} at {path}: {e}")
+
+    if checks:
+        return False, "Disk capacity check failed: " + "; ".join(checks)
+    return True, ""
+
 def print_worker_vram(stage: str):
     if torch.cuda.is_available():
         allocated = torch.cuda.memory_allocated() / (1024**3)
@@ -141,27 +187,12 @@ def process_call_audio_task(self, call_id: int):
     2. Evaluate (Groq)
     """
     print_worker_vram(f"PRE-TASK - Call ID {call_id}")
-    
-    # Hard Cutoff for Legacy Calls (TASK-V07 Protection)
-    if call_id <= 65:
-        print(f"[*] Skipping legacy Call ID {call_id} (ID <= 65)")
-        return
-    
+
     # 0. Redis Health Check (Task 62-G)
     is_healthy, redis_error = check_redis_health()
     if not is_healthy:
         print(f"[!] {redis_error}")
         return
-
-    # 0b. Disk Space Check (Task 67)
-    # Check D: drive where project/database resides
-    try:
-        disk_usage = psutil.disk_usage('D:').percent
-        if disk_usage > 95:
-            print(f"[!] CRITICAL: Disk space on D: is {disk_usage}%. Worker aborted to prevent Redis MISCONF.")
-            return
-    except:
-        pass
 
     db = SessionLocal()
     current_stage = "INITIALIZATION"
@@ -173,18 +204,20 @@ def process_call_audio_task(self, call_id: int):
             print(f"[!] Background Task: Call ID {call_id} not found.")
             return
 
-        # Fetch Employee for dynamic speaker mapping (Task 62-F)
-        employee = db.query(Employee).filter(Employee.id == call.employee_id).first()
-        agent_name = employee.name if employee else None
-
-        # 0. File Integrity Check (Task 62-E)
-        if not os.path.exists(call.audio_file_path) or os.path.getsize(call.audio_file_path) == 0:
-            print(f"[!] Call {call_id}: Corrupt upload or missing file.")
+        # Disk/Pagefile preflight: fail the call cleanly before native model
+        # loading can terminate the process and leave it stuck in PROCESSING.
+        has_disk_capacity, disk_error = check_disk_capacity()
+        if not has_disk_capacity:
+            print(f"[!] Call {call_id}: {disk_error}")
             call.status = CallStatus.FAILED
-            call.error_message = "Corrupt Upload: Audio file is empty or missing."
+            call.error_message = disk_error
             db.commit()
             redis_client.publish("call_updates", json.dumps({"call_id": call_id, "status": CallStatus.FAILED.value}))
             return
+
+        # Fetch Employee for dynamic speaker mapping (Task 62-F)
+        employee = db.query(Employee).filter(Employee.id == call.employee_id).first()
+        agent_name = employee.name if employee else None
 
         if _has_completed_evaluation(db, call_id):
             print(f"[*] Call {call_id} already has a completed evaluation. Skipping duplicate task run.")
@@ -193,6 +226,15 @@ def process_call_audio_task(self, call_id: int):
                 call.processed_at = datetime.now(timezone.utc)
             db.commit()
             redis_client.publish("call_updates", json.dumps({"call_id": call_id, "status": CallStatus.EVALUATED.value}))
+            return
+
+        # 0. File Integrity Check (Task 62-E)
+        if not os.path.exists(call.audio_file_path) or os.path.getsize(call.audio_file_path) == 0:
+            print(f"[!] Call {call_id}: Corrupt upload or missing file.")
+            call.status = CallStatus.FAILED
+            call.error_message = "Corrupt Upload: Audio file is empty or missing."
+            db.commit()
+            redis_client.publish("call_updates", json.dumps({"call_id": call_id, "status": CallStatus.FAILED.value}))
             return
 
         # 1. Idempotency Check & Start Processing
@@ -667,13 +709,9 @@ def process_call_audio_task(self, call_id: int):
         except:
             pass
     finally:
+        release_worker_model_resources()
         print_worker_vram(f"END-TASK - Call ID {call_id}")
         db.close()
-        # Explicitly clear VRAM and collect garbage before process exit
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
 
 
 @celery_app.task(name="evaluate_live_call")
@@ -859,4 +897,5 @@ def evaluate_live_call_task(call_id: int):
             call.error_message = f"Live Eval Error: {str(e)}"
             db.commit()
     finally:
+        release_worker_model_resources()
         db.close()

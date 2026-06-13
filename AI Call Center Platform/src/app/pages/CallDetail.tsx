@@ -3,11 +3,11 @@ import { useParams, useNavigate } from 'react-router';
 import {
   Play, Pause, SkipBack, SkipForward, Volume2, Download,
   Star, Tag, ChevronLeft, User, Mic, Clock, Target,
-  Flame, Thermometer, Snowflake, Loader2, ShieldAlert
+  Flame, Thermometer, Snowflake, Loader2, ShieldAlert, MessageSquarePlus
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { getCallDetails, getEmployees, getCampaigns } from '../lib/api';
-import { Call, CallStatus, Agent, Campaign } from '../lib/types';
+import { getCallDetails, getEmployees, getCampaigns, getTeamLeaderCall } from '../lib/api';
+import { Call, CallStatus, Agent, Campaign, TeamLeaderCallRowOut } from '../lib/types';
 import { EmotionalWaveform } from '../components/call/EmotionalWaveform';
 import { TalkListenGauge } from '../components/call/TalkListenGauge';
 import { InteractiveTranscript } from '../components/call/InteractiveTranscript';
@@ -20,6 +20,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card'
 import { Badge } from '../components/ui/badge';
 import { Separator } from '../components/ui/separator';
 import { ViolationItem } from '../components/call/ViolationItem';
+import { buildNotesComposeUrl } from '../lib/noteNavigation';
 
 const leadConfig = {
   hot: { icon: Flame, color: 'red', label: 'Hot Lead' },
@@ -38,15 +39,18 @@ export function CallDetail() {
   const { userRole } = useApp();
   const canSeeLeadStatus = userRole === 'admin' || userRole === 'hr_manager' || userRole === 'qa';
   const isQAOrAdmin = userRole === 'admin' || userRole === 'qa';
+  const canLaunchNote = ['admin', 'qa', 'team_manager', 'team_leader', 'ops_manager'].includes(userRole);
+  const canRequestQaReview = ['admin', 'team_manager', 'team_leader', 'ops_manager'].includes(userRole);
 
   const [isEditingScore, setIsEditingScore] = useState(false);
   const [editScoreValue, setEditScoreValue] = useState("");
   const isSubmittingRef = useRef(false);
 
-  const { data: call, isLoading: callLoading, refetch } = useQuery<Call>({
+  const { data: call, isLoading: callLoading, refetch } = useQuery<Call | TeamLeaderCallRowOut>({
     queryKey: ['call', id],
-    queryFn: () => getCallDetails(parseInt(id!)),
+    queryFn: () => userRole === 'team_leader' ? getTeamLeaderCall(parseInt(id!)) : getCallDetails(parseInt(id!)),
     refetchInterval: (query) => {
+      if (userRole === 'team_leader') return false;
       const data = query.state.data;
       if (!data) return false;
       const status = data.status;
@@ -145,7 +149,85 @@ export function CallDetail() {
 
   if (!call) return <div className="p-6 text-muted-foreground">Call not found.</div>;
 
+  if (userRole === 'team_leader' && !('transcript' in call)) {
+    const scopedCall = call as TeamLeaderCallRowOut;
+    const scopedScore = scopedCall.overridden_score ?? scopedCall.evaluation_score;
+    const openScopedNoteComposer = (noteType: string, title: string) => {
+      navigate(buildNotesComposeUrl({
+        noteType,
+        callId: String(scopedCall.id),
+        employeeId: String(scopedCall.employee_id),
+        campaignId: String(scopedCall.campaign_id),
+        title,
+      }));
+    };
+
+    return (
+      <div className="p-6 space-y-5 max-w-5xl">
+        <div className="flex items-start gap-4">
+          <button onClick={() => navigate('/team-leader/calls')} className="size-8 flex items-center justify-center rounded-lg bg-secondary text-muted-foreground hover:text-foreground transition-all flex-shrink-0">
+            <ChevronLeft size={16} />
+          </button>
+          <div className="flex-1">
+            <div className="flex items-center gap-3 flex-wrap">
+              <h2 className="text-slate-100 text-base font-semibold">Call #{scopedCall.id}</h2>
+              <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full border bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+                {scopedCall.status}
+              </span>
+            </div>
+            <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground flex-wrap">
+              <span>{new Date(scopedCall.created_at).toLocaleString()}</span>
+              <span>·</span>
+              <span>{scopedCall.employee_name || `Agent #${scopedCall.employee_id}`}</span>
+              <span>·</span>
+              <span>{scopedCall.campaign_name || `Campaign #${scopedCall.campaign_id}`}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Evaluation Score</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-semibold text-foreground">{scopedScore?.toFixed(1) || '--'}</p>
+              <p className="text-xs text-muted-foreground mt-1">Restricted detail path for Team Leader access.</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Audio Duration</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-semibold text-foreground">{formatTime(scopedCall.audio_duration || 0)}</p>
+              <p className="text-xs text-muted-foreground mt-1">Transcript and raw export tools are intentionally hidden.</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Workflow Actions</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => openScopedNoteComposer('QA_REVIEW_REQUEST', `QA review request for call #${scopedCall.id}`)}>
+                Request QA Review
+              </Button>
+              <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => openScopedNoteComposer('QA_DISPUTE', `QA dispute for call #${scopedCall.id}`)}>
+                Dispute QA Score
+              </Button>
+              <Button size="sm" className="w-full justify-start" onClick={() => openScopedNoteComposer('GENERAL', `Workflow note for call #${scopedCall.id}`)}>
+                <MessageSquarePlus size={14} />
+                Add Note
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
   const isProcessing = call.status === CallStatus.PENDING || call.status === CallStatus.PROCESSING;
+  const isFailed = call.status === CallStatus.FAILED;
   const leadC = call.lead_status ? (leadConfig as any)[call.lead_status] : null;
   const score = call.overridden_score ?? call.evaluation_score ?? 0;
   
@@ -155,6 +237,15 @@ export function CallDetail() {
 
   const isSalesCall = !!call?.sales_eval_data;
   const salesData = call?.sales_eval_data;
+  const openNoteComposer = (noteType: string, title: string) => {
+    navigate(buildNotesComposeUrl({
+      noteType,
+      callId: String(call.id),
+      employeeId: String(call.employee_id),
+      campaignId: String(call.campaign_id),
+      title,
+    }));
+  };
 
   return (
     <div className="p-6 space-y-5">
@@ -203,8 +294,36 @@ export function CallDetail() {
         </div>
 
         <div className="flex items-center gap-4 flex-shrink-0">
+          {canLaunchNote && (
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              {canRequestQaReview && (
+                <button
+                  onClick={() => openNoteComposer('QA_REVIEW_REQUEST', `QA review request for call #${call.id}`)}
+                  className="h-9 px-3 rounded-lg border border-border bg-card text-sm text-foreground hover:bg-secondary/30 transition-colors"
+                >
+                  Request QA Review
+                </button>
+              )}
+              {canRequestQaReview && (
+                <button
+                  onClick={() => openNoteComposer('QA_DISPUTE', `QA dispute for call #${call.id}`)}
+                  className="h-9 px-3 rounded-lg border border-border bg-card text-sm text-foreground hover:bg-secondary/30 transition-colors"
+                >
+                  Dispute QA Score
+                </button>
+              )}
+              <button
+                onClick={() => openNoteComposer('GENERAL', `Workflow note for call #${call.id}`)}
+                className="h-9 px-3 rounded-lg bg-primary text-primary-foreground text-sm hover:bg-primary/90 transition-colors inline-flex items-center gap-2"
+              >
+                <MessageSquarePlus size={14} />
+                Add Note
+              </button>
+            </div>
+          )}
+
           {/* Outcome Badge */}
-          {!isProcessing && call.outcome && call.outcome.primary_outcome && (
+          {!isProcessing && !isFailed && call.outcome && call.outcome.primary_outcome && (
             <div className="flex flex-col items-end px-4 py-3 rounded-xl border bg-secondary/50 border-border">
               <span className="text-sm font-semibold text-foreground">
                 {call.outcome.primary_outcome}
@@ -218,7 +337,7 @@ export function CallDetail() {
           )}
 
           {/* QA Score Badge */}
-          {!isProcessing && (
+          {!isProcessing && !isFailed && (
             <div 
               onDoubleClick={() => {
                 if (isQAOrAdmin) {
@@ -295,7 +414,19 @@ export function CallDetail() {
         </div>
       )}
 
-      {!isProcessing && (
+      {isFailed && (
+        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-6">
+          <h3 className="text-red-400 font-semibold mb-2">Upload completed, but AI processing failed</h3>
+          <p className="text-sm text-foreground/90">
+            {call.error_message || 'The call record was created successfully, but the background transcription or evaluation job did not finish.'}
+          </p>
+          <p className="text-xs text-muted-foreground mt-2">
+            The file is stored and the call entry exists. Check the worker logs after retrying the processor.
+          </p>
+        </div>
+      )}
+
+      {!isProcessing && !isFailed && (
         <>
           {/* Tags */}
           <div className="flex flex-wrap gap-2">

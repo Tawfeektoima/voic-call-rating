@@ -14,6 +14,10 @@ export function Login() {
     password: ''
   });
 
+  const getPostLoginRoute = (role: string) => {
+    return ['ops_manager', 'team_manager', 'team_leader'].includes(role) ? '/notes' : '/';
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -39,7 +43,7 @@ export function Login() {
       toast.success(`Welcome back, ${user.name}!`);
       
       // Redirect to dashboard
-      navigate('/');
+      navigate(getPostLoginRoute(normalizedUser.role));
     } catch (error: any) {
       console.error('Login failed:', error);
       const message = error.response?.data?.detail || 'Invalid email or password';

@@ -19,7 +19,7 @@ from app.models import (
 from app.worker import process_call_audio_task
 
 
-def _seed_worker_call():
+def _seed_worker_call(call_id: int = 100):
     db = SessionLocal()
     try:
         employee = Employee(
@@ -44,7 +44,7 @@ def _seed_worker_call():
         audio_path.write_bytes(b"fake-audio-bytes")
 
         call = Call(
-            id=100,
+            id=call_id,
             employee_id=employee.id,
             campaign_id=campaign.id,
             audio_file_path=str(audio_path),
@@ -144,3 +144,52 @@ def test_process_call_audio_is_idempotent():
     assert mock_eval.call_count == 1
     assert mock_stats.call_count == 1
     assert mock_publish.call_count >= 1
+
+
+def test_process_call_audio_handles_low_id_calls():
+    call_id = _seed_worker_call(call_id=3)
+
+    raw_segments = [
+        {"start": 0.0, "end": 2.0, "speaker": "SPEAKER_00", "text": "hello there", "needs_review": False}
+    ]
+    eval_result = SimpleNamespace(
+        reasoning="Reasoning",
+        summary="Summary",
+        score=88.0,
+        strengths=[],
+        weaknesses=[],
+        qa_pairs=[],
+        opening_ok=True,
+        closing_ok=True,
+        dob_verified=False,
+        primary_outcome="qualified",
+        outcome_value=10.0,
+        follow_up_required=False,
+        follow_up_date=None,
+        campaign_specific_data={},
+        raw_sales_data={},
+        raw_violations=[],
+    )
+
+    with patch("app.worker.check_redis_health", return_value=(True, "")), \
+        patch("app.worker.psutil.disk_usage") as mock_disk_usage, \
+        patch("app.worker.force_cuda_cleanup"), \
+        patch("app.worker.transcriber.process_audio", return_value=(raw_segments, 4.0)) as mock_transcribe, \
+        patch("app.worker.acoustic_analyzer.analyze_segments", return_value=[{"time": 0.0, "emotion": "calm", "intensity": 95.0, "speaker": "SPEAKER_00"}]), \
+        patch("app.worker.assign_speakers", return_value={"SPEAKER_00": "Agent"}), \
+        patch("app.worker.evaluate_transcript", return_value=eval_result), \
+        patch("app.services.aggregation.update_agent_mastery_stats"), \
+        patch("app.worker.redis_client.publish"):
+        mock_disk_usage.return_value.percent = 10.0
+        process_call_audio_task(call_id)
+
+    db = SessionLocal()
+    try:
+        call = db.query(Call).filter(Call.id == call_id).first()
+        assert call is not None
+        assert call.status == CallStatus.EVALUATED
+        assert db.query(CallOutcome).filter(CallOutcome.call_id == call_id).count() == 1
+    finally:
+        db.close()
+
+    assert mock_transcribe.call_count == 1

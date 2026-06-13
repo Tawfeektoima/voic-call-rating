@@ -94,3 +94,15 @@ In cases where an operation crosses strict boundary rules (e.g., a Team Leader a
 2. **Approval Request Routing:** The UI should catch the 403 error and, if applicable, present an "Approval Required" dialog. 
 3. **Escalation:** The request is routed via the internal ticketing/notification system to an **Admin** or **Ops Manager**.
 4. **Temporary Grant:** Once approved, the system generates a temporary authorization token (or adds a temporary association table entry) granting the lower-level role explicit access to execute that specific operation.
+
+---
+
+## 5. Workflow Notes
+
+Workflow notes are a shared operational layer, not free-form chat. Every note is tied to business context such as an employee, campaign, call, or KPI. The backend remains the source of truth for recipient routing, visibility, read access, resolution, archival, and soft deletion.
+
+- `INTERNAL`: visible only to sender, recipient, and authorized scoped roles.
+- `RECIPIENT_VISIBLE`: visible to sender and intended recipient-side users.
+- `AGENT_VISIBLE`: visible to the linked agent only when the note explicitly allows it.
+
+Notes never expand a user's access to the linked entity. A user must already be allowed to access the note context and the note itself.

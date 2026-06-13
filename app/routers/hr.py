@@ -399,8 +399,10 @@ def preview_bulk_agents(
                 errors.append(f"Campaign '{campaign_name}' does not exist.")
 
         # Role validation
-        valid_roles = [UserRole.AGENT.value, UserRole.QA.value, UserRole.ADMIN.value, UserRole.HR_MANAGER.value]
-        if role not in valid_roles:
+        valid_roles = [UserRole.AGENT.value, UserRole.QA.value, UserRole.HR_MANAGER.value]
+        if role == UserRole.TEAM_LEADER.value:
+            errors.append("TEAM_LEADER is not allowed in HR bulk onboarding.")
+        elif role not in valid_roles:
             errors.append(f"Invalid role '{role}'. Must be one of: {', '.join(valid_roles)}")
 
         preview_data.append({
@@ -495,8 +497,10 @@ def import_bulk_agents(
             if not db_camp:
                 errors.append(f"Campaign '{campaign_name}' does not exist.")
 
-        valid_roles = [UserRole.AGENT.value, UserRole.QA.value, UserRole.ADMIN.value, UserRole.HR_MANAGER.value]
-        if role not in valid_roles:
+        valid_roles = [UserRole.AGENT.value, UserRole.QA.value, UserRole.HR_MANAGER.value]
+        if role == UserRole.TEAM_LEADER.value:
+            errors.append("TEAM_LEADER is not allowed in HR bulk onboarding.")
+        elif role not in valid_roles:
             errors.append(f"Invalid role '{role}'. Must be one of: {', '.join(valid_roles)}")
 
         if password and len(password) < 6:
@@ -569,8 +573,10 @@ def import_bulk_agents(
             if not db_camp:
                 errors.append(f"Campaign '{campaign_name}' does not exist.")
 
-        valid_roles = [UserRole.AGENT.value, UserRole.QA.value, UserRole.ADMIN.value, UserRole.HR_MANAGER.value]
-        if role not in valid_roles:
+        valid_roles = [UserRole.AGENT.value, UserRole.QA.value, UserRole.HR_MANAGER.value]
+        if role == UserRole.TEAM_LEADER.value:
+            errors.append("TEAM_LEADER is not allowed in HR bulk onboarding.")
+        elif role not in valid_roles:
             errors.append(f"Invalid role '{role}'. Must be one of: {', '.join(valid_roles)}")
 
         if password and len(password) < 6:

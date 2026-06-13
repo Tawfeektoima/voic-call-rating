@@ -18,6 +18,7 @@ import { updateLeadStatus } from '../lib/api';
 import { Agent, Call } from '../lib/types';
 import { cn } from '../components/ui/utils';
 import { Skeleton } from '../components/ui/skeleton';
+import { buildNotesComposeUrl } from '../lib/noteNavigation';
 
 const leadConfig = {
   hot: { icon: Flame, color: '#ef4444', bg: 'bg-red-500/10', border: 'border-red-500/20', text: 'text-red-400', label: 'Hot' },
@@ -92,6 +93,9 @@ export function BusinessIntelligence() {
   const navigate = useNavigate();
   const isAdmin = userRole === 'admin';
   const [activeLeadFilter, setActiveLeadFilter] = useState<'all' | 'hot' | 'warm' | 'cold'>('all');
+  const openNoteLauncher = (params: Record<string, string | number | undefined>) => {
+    navigate(buildNotesComposeUrl(params));
+  };
 
   const { data: leads, isLoading: leadsLoading, refetch: refetchLeads } = useLeads();
   const { data: ranking, isLoading: rankingLoading } = useRanking();
@@ -179,6 +183,12 @@ export function BusinessIntelligence() {
               </div>
               <p className="text-foreground text-xl font-semibold">${totalValueGenerated.toLocaleString()}</p>
               <p className="text-xs text-muted-foreground mt-1">From resolved outcomes</p>
+              <button
+                onClick={() => openNoteLauncher({ noteType: 'KPI_ALERT', kpiKey: 'total_revenue', kpiLabel: 'Total Revenue', currentValue: totalValueGenerated, title: 'Total Revenue KPI alert' })}
+                className="mt-3 text-xs text-primary hover:text-indigo-300 inline-flex items-center gap-1"
+              >
+                Send KPI alert <ArrowUpRight size={12} />
+              </button>
             </div>
             <div className="bg-card border border-border rounded-xl p-4">
               <div className="flex items-center gap-2 mb-2">
@@ -187,6 +197,12 @@ export function BusinessIntelligence() {
               </div>
               <p className="text-foreground text-xl font-semibold">{salesConversionRate.toFixed(1)}%</p>
               <p className="text-xs text-muted-foreground mt-1">{salesClosedCount} / {salesCalls.length} Sales</p>
+              <button
+                onClick={() => openNoteLauncher({ noteType: 'KPI_ALERT', kpiKey: 'conversion_rate', kpiLabel: 'Conversion Rate', currentValue: Number(salesConversionRate.toFixed(1)), title: 'Conversion Rate KPI alert' })}
+                className="mt-3 text-xs text-primary hover:text-indigo-300 inline-flex items-center gap-1"
+              >
+                Send KPI alert <ArrowUpRight size={12} />
+              </button>
             </div>
             <div className="bg-card border border-border rounded-xl p-4">
               <div className="flex items-center gap-2 mb-2">
@@ -290,6 +306,17 @@ export function BusinessIntelligence() {
                           className="ml-auto text-[10px] text-primary flex items-center gap-0.5"
                         >
                           Details <ChevronRight size={10} />
+                        </button>
+                        <button
+                          onClick={() => openNoteLauncher({
+                            noteType: 'GENERAL',
+                            callId: lead.id,
+                            employeeId: lead.employee_id,
+                            title: `Lead follow-up for call #${lead.id}`,
+                          })}
+                          className="text-[10px] text-primary flex items-center gap-0.5"
+                        >
+                          Note <ArrowUpRight size={10} />
                         </button>
                       </div>
                     </div>

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import {
   ChevronLeft, Phone, Target, TrendingUp, Star, Award,
-  ChevronRight, Mail, Users
+  ChevronRight, Mail, Users, MessageSquarePlus
 } from 'lucide-react';
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
@@ -17,6 +17,7 @@ import { useCalls } from '../hooks/useCalls';
 import { cn } from '../components/ui/utils';
 import { Agent, Call } from '../lib/types';
 import { Skeleton } from '../components/ui/skeleton';
+import { buildNotesComposeUrl } from '../lib/noteNavigation';
 
 const tierConfig = {
   platinum: { color: '#e2e8f0', bg: 'bg-slate-300/10 border-slate-300/20', label: 'Platinum', stars: 4 },
@@ -29,6 +30,8 @@ export function AgentProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { userRole, currentUser } = useApp();
+  const canCreateCoachingNote = ['admin', 'qa', 'hr_manager', 'team_leader'].includes(userRole);
+  const canCreateCoachingEscalation = ['admin', 'qa', 'hr_manager', 'team_manager'].includes(userRole);
   
   // For agents, always show their own profile. For others, allow switching via ID.
   const employeeId = (userRole === 'agent' || id === 'me') ? currentUser?.id : (id ? parseInt(id) : currentUser?.id);
@@ -72,6 +75,13 @@ export function AgentProfile() {
   const scoreColor = avgScore >= 85 ? '#10b981' : avgScore >= 70 ? '#f59e0b' : '#ef4444';
 
   const mastery = performance?.cumulative_stats;
+  const openAgentNote = (noteType: string, title: string) => {
+    navigate(buildNotesComposeUrl({
+      noteType,
+      employeeId: String(agent.id),
+      title,
+    }));
+  };
   
   const radarData = [
     { skill: 'Rapport Building', A: mastery?.rapport_building ?? 80, fullMark: 100 },
@@ -88,6 +98,27 @@ export function AgentProfile() {
         <button onClick={() => navigate('/intelligence')} className="size-8 flex items-center justify-center rounded-lg bg-secondary text-muted-foreground hover:text-foreground transition-all">
           <ChevronLeft size={16} />
         </button>
+        {(canCreateCoachingNote || canCreateCoachingEscalation) && (
+          <div className="flex items-center gap-2 ml-auto">
+            {canCreateCoachingNote && (
+              <button
+                onClick={() => openAgentNote('COACHING_NOTE', `Coaching note for ${agent.name}`)}
+                className="h-9 px-3 rounded-lg border border-border bg-card text-sm text-foreground hover:bg-secondary/30 transition-colors"
+              >
+                Coaching Note
+              </button>
+            )}
+            {canCreateCoachingEscalation && (
+              <button
+                onClick={() => openAgentNote('COACHING_ESCALATION', `Coaching escalation for ${agent.name}`)}
+                className="h-9 px-3 rounded-lg bg-primary text-primary-foreground text-sm hover:bg-primary/90 transition-colors inline-flex items-center gap-2"
+              >
+                <MessageSquarePlus size={14} />
+                Escalate
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Agent Switcher (Hidden for Agents) */}
         {userRole !== 'agent' && allAgents && (

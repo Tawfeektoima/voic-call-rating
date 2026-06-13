@@ -2,6 +2,7 @@ import os
 import uvicorn
 import json
 import asyncio
+import importlib
 import warnings
 import redis.asyncio as aioredis
 from dotenv import load_dotenv
@@ -30,10 +31,25 @@ if os.path.exists(scripts_path) and scripts_path not in os.environ["PATH"]:
 load_dotenv()
 
 from app.database import engine, Base
-from app.routers import audio, analytics, admin, auth, system, export, hr, websocket_router, live, review
+from app.routers import audio, analytics, admin, auth, system, export, hr, websocket_router, live, review, notes
 from app.recovery import recover_stuck_tasks
 from app.services.websocket import manager
 from app.config import get_settings
+
+
+def _load_optional_router(module_name: str):
+    try:
+        module = importlib.import_module(f"app.routers.{module_name}")
+    except ModuleNotFoundError:
+        return None
+    return getattr(module, "router", None)
+
+
+OPTIONAL_ROUTERS = (
+    _load_optional_router("ops"),
+    _load_optional_router("team_leader"),
+    _load_optional_router("team_manager"),
+)
 
 # --- Phase 8: Custom Observability Metrics ---
 # Target p95 < 200ms
@@ -162,9 +178,13 @@ app.include_router(analytics.router)
 app.include_router(system.router)
 app.include_router(export.router)
 app.include_router(hr.router)
+app.include_router(notes.router)
 app.include_router(websocket_router.router)
 app.include_router(live.router)
 app.include_router(review.router)
+for router in OPTIONAL_ROUTERS:
+    if router is not None:
+        app.include_router(router)
 
 
 @app.get("/")

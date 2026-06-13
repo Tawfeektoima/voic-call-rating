@@ -7,11 +7,13 @@ import {
 } from 'lucide-react';
 import { useCalls, useUploadAudio, useBulkUploadAudio } from '../hooks/useCalls';
 import { useCampaigns } from '../hooks/useCampaigns';
-import { getEmployees } from '../lib/api';
+import { getApiErrorMessage, getEmployees } from '../lib/api';
 import { useQuery } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { Call, CallStatus } from '../lib/types';
 import { cn } from '../components/ui/utils';
 import { Skeleton } from '../components/ui/skeleton';
+import { buildNotesComposeUrl } from '../lib/noteNavigation';
 
 export function CallExplorer() {
   const navigate = useNavigate();
@@ -43,6 +45,15 @@ export function CallExplorer() {
   const { data: agents } = useQuery({ queryKey: ['agents'], queryFn: getEmployees });
   const uploadMutation = useUploadAudio();
   const bulkUploadMutation = useBulkUploadAudio();
+  const openCallNote = (call: Call) => {
+    navigate(buildNotesComposeUrl({
+      noteType: 'GENERAL',
+      callId: call.id,
+      employeeId: call.employee_id,
+      campaignId: call.campaign_id,
+      title: `Workflow note for call #${call.id}`,
+    }));
+  };
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,11 +66,12 @@ export function CallExplorer() {
 
     uploadMutation.mutate(formData, {
       onSuccess: (data) => {
+        toast.success('Upload complete. AI processing has started.');
         navigate(`/calls/${data.call_id}`);
       },
       onError: (err) => {
         console.error('Upload failed:', err);
-        alert('Failed to upload audio. Please try again.');
+        toast.error(getApiErrorMessage(err, 'Audio upload failed. Please try again.'));
       }
     });
   };
@@ -115,7 +127,7 @@ export function CallExplorer() {
       },
       onError: (err) => {
         console.error('Bulk upload failed:', err);
-        alert('Failed to process bulk upload.');
+        toast.error(getApiErrorMessage(err, 'Bulk upload failed. Please try again.'));
       }
     });
   };
@@ -225,9 +237,22 @@ export function CallExplorer() {
                     {new Date(call.created_at).toLocaleDateString()}
                   </td>
                   <td className="px-6 py-4 text-right">
-                    <button className="text-muted-foreground group-hover:text-primary transition-all">
-                      <ChevronRight size={18} />
-                    </button>
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openCallNote(call);
+                        }}
+                        className="text-xs text-primary hover:text-indigo-300 transition-colors"
+                        title={`Create a workflow note for call #${call.id}`}
+                      >
+                        Add Note
+                      </button>
+                      <button className="text-muted-foreground group-hover:text-primary transition-all">
+                        <ChevronRight size={18} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

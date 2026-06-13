@@ -50,6 +50,7 @@ sys.modules["torch"].cuda.is_available.return_value = False
 # Configure DATABASE_URL and UPLOAD_DIR before any app imports
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 os.environ["UPLOAD_DIR"] = "test_uploads"
+os.environ["SECRET_KEY"] = "0123456789abcdef0123456789abcdef"
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
@@ -102,6 +103,7 @@ def clean_db_and_uploads():
 
     # Clean test uploads folder files
     test_uploads_dir = "test_uploads"
+    os.makedirs(test_uploads_dir, exist_ok=True)
     if os.path.exists(test_uploads_dir):
         for filename in os.listdir(test_uploads_dir):
             file_path = os.path.join(test_uploads_dir, filename)
@@ -116,6 +118,7 @@ def clean_db_and_uploads():
 @pytest.fixture(scope="session", autouse=True)
 def test_uploads_session_cleanup():
     """Session-scoped teardown to remove the temporary upload directory."""
+    os.makedirs("test_uploads", exist_ok=True)
     yield
     test_uploads_dir = "test_uploads"
     if os.path.exists(test_uploads_dir):

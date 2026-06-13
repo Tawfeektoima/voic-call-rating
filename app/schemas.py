@@ -4,10 +4,10 @@ Pydantic schemas for request/response validation and the Groq structured output.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, List
 
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 import json
 
 
@@ -625,3 +625,440 @@ class BulkCallUploadResponse(BaseModel):
     success_count: int
     failed_count: int
     message: str
+
+
+# ===========================
+#  Team Manager Reporting Schemas
+# ===========================
+
+class TeamManagerAlertOut(BaseModel):
+    type: str
+    message: str
+    severity: str
+    team_id: Optional[int] = None
+    agent_id: Optional[int] = None
+
+class TeamManagerTeamRowOut(BaseModel):
+    team_id: int
+    team_name: str
+    campaign_id: Optional[int] = None
+    campaign_name: Optional[str] = None
+    leader_id: Optional[int] = None
+    leader_name: Optional[str] = None
+    agent_count: int
+    sales: int
+    revenue: float
+    conversion_rate: float
+    average_qa_score: float
+    attendance_rate: float
+
+class TeamManagerDashboardOut(BaseModel):
+    total_teams: int
+    total_agents: int
+    total_sales: int
+    total_revenue: float
+    average_conversion_rate: float
+    average_qa_score: float
+    attendance_rate: float
+    teams: List[TeamManagerTeamRowOut]
+    alerts: List[TeamManagerAlertOut]
+
+class TeamManagerAgentRowOut(BaseModel):
+    agent_id: int
+    agent_name: str
+    email: str
+    team_id: int
+    team_name: str
+    campaign_id: Optional[int] = None
+    campaign_name: Optional[str] = None
+    sales: int
+    revenue: float
+    conversion_rate: float
+    qa_score: Optional[float] = None
+    attendance_rate: Optional[float] = None
+    status: str
+
+class TeamManagerAgentDetailOut(BaseModel):
+    agent_id: int
+    agent_name: str
+    email: str
+    employee_code: str
+    team_id: int
+    team_name: str
+    campaign_id: Optional[int] = None
+    campaign_name: Optional[str] = None
+    sales: int
+    revenue: float
+    conversion_rate: float
+    qa_score: Optional[float] = None
+    attendance_rate: Optional[float] = None
+    status: str
+    created_at: datetime
+
+class TeamManagerSalesRow(BaseModel):
+    team_id: int
+    team_name: str
+    sales: int
+    total_calls: int
+
+class TeamManagerSalesReportOut(BaseModel):
+    teams: List[TeamManagerSalesRow]
+    total_sales: int
+
+class TeamManagerRevenueRow(BaseModel):
+    team_id: int
+    team_name: str
+    revenue: float
+
+class TeamManagerRevenueReportOut(BaseModel):
+    teams: List[TeamManagerRevenueRow]
+    total_revenue: float
+
+class TeamManagerConversionRow(BaseModel):
+    team_id: int
+    team_name: str
+    sales: int
+    total_calls: int
+    conversion_rate: float
+
+class TeamManagerConversionReportOut(BaseModel):
+    teams: List[TeamManagerConversionRow]
+    average_conversion_rate: float
+
+class TeamManagerAttendanceRow(BaseModel):
+    agent_id: int
+    agent_name: str
+    attendance_date: str
+    status: str
+    scheduled_minutes: Optional[int] = None
+    worked_minutes: Optional[int] = None
+    late_minutes: Optional[int] = None
+
+class TeamManagerAttendanceReportOut(BaseModel):
+    records: List[TeamManagerAttendanceRow]
+    attendance_rate: float
+
+class TeamManagerKpisOut(BaseModel):
+    month: str
+    total_sales: int
+    total_revenue: float
+    average_qa_score: float
+    average_conversion_rate: float
+    attendance_rate: float
+
+
+# ===========================
+#  Team Leader Schemas
+# ===========================
+
+class TeamLeaderDashboardOut(BaseModel):
+    team_count: int
+    agent_count: int
+    average_qa_score: float
+    attendance_rate: float
+    sales: int
+    revenue: float
+    conversion_rate: float
+    pending_notes_count: int
+    pending_transfer_requests_count: int
+
+class TeamLeaderTeamRowOut(BaseModel):
+    team_id: int
+    team_name: str
+    campaign_id: Optional[int] = None
+    campaign_name: Optional[str] = None
+    leader_id: Optional[int] = None
+    leader_name: Optional[str] = None
+    agent_count: int
+    sales: int
+    revenue: float
+    conversion_rate: float
+    average_qa_score: float
+    attendance_rate: float
+
+class TeamLeaderAgentRowOut(BaseModel):
+    agent_id: int
+    agent_name: str
+    email: str
+    team_id: int
+    team_name: str
+    campaign_id: Optional[int] = None
+    campaign_name: Optional[str] = None
+    sales: int
+    revenue: float
+    conversion_rate: float
+    qa_score: Optional[float] = None
+    attendance_rate: Optional[float] = None
+    status: str
+
+class TeamLeaderCallRowOut(BaseModel):
+    id: int
+    employee_id: int
+    employee_name: Optional[str] = None
+    campaign_id: int
+    campaign_name: Optional[str] = None
+    status: str
+    evaluation_score: Optional[float] = None
+    overridden_score: Optional[float] = None
+    audio_duration: Optional[float] = None
+    created_at: datetime
+
+class TeamLeaderKpisOut(BaseModel):
+    month: str
+    total_sales: int
+    total_revenue: float
+    average_qa_score: float
+    average_conversion_rate: float
+    attendance_rate: float
+
+
+# ===========================
+#  KPI Threshold Config Schemas
+# ===========================
+
+class KpiThresholdCreate(BaseModel):
+    team_id: Optional[int] = None
+    campaign_id: Optional[int] = None
+    kpi_key: str
+    kpi_label: Optional[str] = None
+    threshold_type: str  # MINIMUM, MAXIMUM
+    target_value: float
+    is_active: bool = True
+
+class KpiThresholdUpdate(BaseModel):
+    kpi_label: Optional[str] = None
+    threshold_type: Optional[str] = None
+    target_value: Optional[float] = None
+    is_active: Optional[bool] = None
+
+class KpiThresholdOut(BaseModel):
+    id: int
+    team_id: Optional[int] = None
+    campaign_id: Optional[int] = None
+    kpi_key: str
+    kpi_label: str
+    threshold_type: str
+    target_value: float
+    is_active: bool
+    created_by_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ===========================
+#  Agent Transfer Requests Schemas
+# ===========================
+
+class AgentTransferRequestCreate(BaseModel):
+    agent_id: int
+    from_team_id: int
+    to_team_id: Optional[int] = None
+    reason: str
+
+class AgentTransferRequestOut(BaseModel):
+    id: int
+    agent_id: int
+    agent_name: Optional[str] = None
+    from_team_id: int
+    from_team_name: Optional[str] = None
+    to_team_id: Optional[int] = None
+    to_team_name: Optional[str] = None
+    requested_by_id: int
+    requested_by_name: Optional[str] = None
+    reviewed_by_id: Optional[int] = None
+    reviewed_by_name: Optional[str] = None
+    status: str
+    reason: str
+    review_note: Optional[str] = None
+    created_at: datetime
+    reviewed_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ===========================
+#  Role Notes Schemas
+# ===========================
+
+class RoleNoteCreate(BaseModel):
+    recipient_id: Optional[int] = None
+    recipient_role: Optional[str] = None
+    visibility: str = "INTERNAL"
+    team_id: Optional[int] = None
+    campaign_id: Optional[int] = None
+    employee_id: Optional[int] = None
+    call_id: Optional[int] = None
+    parent_note_id: Optional[int] = None
+    title: str
+    body: str
+    note_type: str = "GENERAL"
+    priority: str = "NORMAL"
+    kpi_key: Optional[str] = None
+    kpi_label: Optional[str] = None
+    current_value: Optional[float] = None
+    target_value: Optional[float] = None
+    period_start: Optional[datetime] = None
+    period_end: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def validate_role_note(self):
+        if not self.title or not self.title.strip():
+            raise ValueError("title is required")
+        if not self.body or not self.body.strip():
+            raise ValueError("body is required")
+        if self.recipient_id is not None and self.recipient_role is not None:
+            raise ValueError("provide recipient_id or recipient_role, not both")
+        if self.note_type in {"KPI_ALERT", "KPI_FOLLOW_UP"}:
+            if self.team_id is None:
+                raise ValueError("team_id is required for KPI notes")
+            required = [self.kpi_key, self.kpi_label, self.current_value, self.target_value]
+            if any(value is None for value in required):
+                raise ValueError("KPI fields are required for KPI notes")
+        return self
+
+class RoleNoteUpdate(BaseModel):
+    title: Optional[str] = None
+    body: Optional[str] = None
+    priority: Optional[str] = None
+
+class RoleNoteStatusUpdate(BaseModel):
+    status: str
+
+class RoleNoteRecipientOut(BaseModel):
+    id: int
+    name: str
+    role: str
+    reason: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+class RoleNoteOut(BaseModel):
+    id: int
+    sender_id: int
+    sender_name: Optional[str] = None
+    recipient_id: Optional[int] = None
+    recipient_name: Optional[str] = None
+    recipient_role: Optional[str] = None
+    visibility: Optional[str] = None
+    team_id: Optional[int] = None
+    team_name_snapshot: Optional[str] = None
+    campaign_id: Optional[int] = None
+    campaign_name_snapshot: Optional[str] = None
+    employee_id: Optional[int] = None
+    agent_name_snapshot: Optional[str] = None
+    call_id: Optional[int] = None
+    parent_note_id: Optional[int] = None
+    title: str
+    body: str
+    note_type: str
+    priority: str
+    status: str
+    kpi_key: Optional[str] = None
+    kpi_label: Optional[str] = None
+    current_value: Optional[float] = None
+    target_value: Optional[float] = None
+    period_start: Optional[datetime] = None
+    period_end: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    read_at: Optional[datetime] = None
+    resolved_at: Optional[datetime] = None
+    resolved_by_id: Optional[int] = None
+    resolved_by_name: Optional[str] = None
+    deleted_at: Optional[datetime] = None
+    deleted_by_id: Optional[int] = None
+    delete_reason: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+class RoleNoteThreadOut(BaseModel):
+    note: RoleNoteOut
+    replies: List[RoleNoteOut] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ===========================
+#  Operations Schemas
+# ===========================
+
+class OpsFilters(BaseModel):
+    date_from: Optional[datetime] = None
+    date_to: Optional[datetime] = None
+    campaign_id: Optional[int] = None
+    department: Optional[str] = None
+    segment: Optional[str] = None
+    limit: int = 50
+    offset: int = 0
+
+class OpsMetricSummary(BaseModel):
+    metric: str
+    value: float
+    target_value: Optional[float] = None
+    delta: Optional[float] = None
+    trend: str
+    status: str
+
+class OpsCampaignRow(BaseModel):
+    campaign_id: int
+    campaign_name: str
+    total_calls: int
+    attends: int
+    sales: int
+    revenue: float
+    conversion_rate: float
+    avg_qa_score: float
+    violations_count: int
+
+class OpsAttendanceRow(BaseModel):
+    employee_id: int
+    employee_name: str
+    employee_code: str
+    attendance_date: date
+    status: str
+    scheduled_minutes: Optional[int] = None
+    worked_minutes: Optional[int] = None
+    late_minutes: Optional[int] = None
+
+class OpsTopViolationRow(BaseModel):
+    violation_id: str
+    count: int
+    total_deductions: float
+
+class OpsQAOverviewOut(BaseModel):
+    avg_score: float
+    reviewed_calls: int
+    pending_reviews: int
+    qa_alarm_count: int
+    top_violations: List[OpsTopViolationRow]
+
+class OpsViolationsOverviewOut(BaseModel):
+    total_violations: int
+    high_count: int
+    medium_count: int
+    low_count: int
+    hr_flagged_count: int
+    total_deductions: float
+
+class OpsAlertRow(BaseModel):
+    id: int
+    error_type: str
+    error_message: str
+    severity: str
+    resolved: bool
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+class OpsDashboardOut(BaseModel):
+    date_from: Optional[datetime] = None
+    date_to: Optional[datetime] = None
+    totals: List[OpsMetricSummary]
+    campaigns: List[OpsCampaignRow]
+    alerts: List[OpsAlertRow]
+    segments: List[str]
+    updated_at: datetime
+
+

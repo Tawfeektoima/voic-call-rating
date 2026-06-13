@@ -29,3 +29,5 @@ This document defines the supported backend roles and the default access rules u
 - Role changes are admin-only.
 - Account status changes are allowed for `ADMIN` and `HR_MANAGER`.
 - Audit records are append-only and include the actor, target, action, before and after state, reason, success flag, and timestamp.
+- Workflow notes are permission-checked backend records and do not grant access to linked resources.
+- Soft-deleted notes remain admin-visible for audit purposes and are hidden from non-admin users.

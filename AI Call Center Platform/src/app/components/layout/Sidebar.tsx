@@ -2,7 +2,7 @@ import { NavLink } from 'react-router';
 import {
   LayoutDashboard, Radio, Phone, BarChart3, Star, UserCircle,
   Database, Activity, ChevronLeft, ChevronRight, Shield, Zap,
-  Users, LogOut, Eye, EyeOff, ShieldAlert
+  Users, LogOut, EyeOff, ShieldAlert, Inbox
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { UserRole } from '../../lib/types';
@@ -29,6 +29,11 @@ const navItems: NavItemConfig[] = [
   { path: '/data-center',    label: 'Data Center',                                icon: Database,          roles: [UserRole.ADMIN, UserRole.HR_MANAGER, UserRole.QA] },
   { path: '/hr',             label: 'HR Dashboard',                               icon: ShieldAlert,       roles: [UserRole.ADMIN, UserRole.HR_MANAGER, UserRole.QA] },
   { path: '/hr/agents',      label: 'Agent Directory',                            icon: UserCircle,        roles: [UserRole.ADMIN, UserRole.HR_MANAGER] },
+  { path: '/team-leader',    label: 'Team Overview',                              icon: LayoutDashboard,   roles: [UserRole.ADMIN, UserRole.TEAM_LEADER] },
+  { path: '/team-leader/agents', label: 'Team Agents',                            icon: Users,             roles: [UserRole.ADMIN, UserRole.TEAM_LEADER] },
+  { path: '/team-leader/calls', label: 'Team Calls',                              icon: Phone,             roles: [UserRole.ADMIN, UserRole.TEAM_LEADER] },
+  { path: '/team-leader/kpis',  label: 'Team KPIs',                               icon: BarChart3,         roles: [UserRole.ADMIN, UserRole.TEAM_LEADER] },
+  { path: '/notes',          label: 'Workflow Notes',  agentLabel: 'My Notes',    icon: Inbox,             roles: [UserRole.ADMIN, UserRole.QA, UserRole.AGENT, UserRole.HR_MANAGER, UserRole.OPS_MANAGER, UserRole.TEAM_MANAGER, UserRole.TEAM_LEADER] },
   { path: '/system-health',  label: 'System Health',                              icon: Activity,          roles: [UserRole.ADMIN] },
 ];
 

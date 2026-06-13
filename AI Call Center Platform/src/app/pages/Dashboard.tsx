@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router';
 import {
   Phone, Users, TrendingUp, Clock, AlertTriangle, Shield, Zap, Target,
   ArrowUpRight, ArrowDownRight, Flame, Thermometer, Snowflake, Activity,
-  ChevronRight, CheckCircle, XCircle
+  ChevronRight, CheckCircle, XCircle, MessageSquarePlus
 } from 'lucide-react';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -17,6 +17,7 @@ import { cn } from '../components/ui/utils';
 import { Skeleton } from '../components/ui/skeleton';
 import { EmptyState } from '../components/ui/states';
 import { Call } from '../lib/types';
+import { buildNotesComposeUrl } from '../lib/noteNavigation';
 
 const kpiColors: Record<string, { bg: string; icon: string }> = {
   indigo: { bg: 'rgba(99,102,241,0.12)', icon: '#818cf8' },
@@ -77,8 +78,26 @@ export function Dashboard() {
   const { userRole } = useApp();
   const navigate = useNavigate();
   const isAdmin = userRole === 'admin';
+  const kpiLauncherNoteType =
+    userRole === 'admin' || userRole === 'ops_manager'
+      ? 'KPI_ALERT'
+      : userRole === 'team_manager' || userRole === 'team_leader'
+        ? 'KPI_FOLLOW_UP'
+        : undefined;
+  const canLaunchKpiNote = Boolean(kpiLauncherNoteType);
   const canSeeLeadInsights = isAdmin || userRole === 'hr_manager';
   const canSeeQueueDepth = userRole === 'admin' || userRole === 'hr_manager' || userRole === 'qa';
+  const openKpiLauncher = (kpiKey: string, kpiLabel: string, currentValue?: number, targetValue?: number) => {
+    if (!kpiLauncherNoteType) return;
+    navigate(buildNotesComposeUrl({
+      noteType: kpiLauncherNoteType,
+      kpiKey,
+      kpiLabel,
+      title: `${kpiLabel} ${kpiLauncherNoteType === 'KPI_FOLLOW_UP' ? 'KPI follow-up' : 'KPI alert'}`,
+      currentValue,
+      targetValue,
+    }));
+  };
 
   const { data: dashboard, isLoading: kpisLoading, dataUpdatedAt } = useDashboard();
   const { data: recentCalls, isLoading: callsLoading } = useCalls({ limit: 5 } as any);
@@ -114,8 +133,8 @@ export function Dashboard() {
         ) : (
           <>
             <KPICard label="Calls Today" value={kpis.total_calls_today.toString()} sub="Total since midnight" icon={Phone} color="indigo" />
-            <KPICard label="Avg QA Score" value={`${kpis.avg_qa_score}`} sub="Out of 100 pts" icon={Target} color="emerald" />
-            <KPICard label="Pass Rate" value={`${kpis.pass_rate}%`} sub="Score >= 70" icon={CheckCircle} color="violet" />
+            <KPICard label="Avg QA Score" value={`${kpis.avg_qa_score}`} sub="Out of 100 pts" icon={Target} color="emerald" onClick={canLaunchKpiNote ? () => openKpiLauncher('average_qa_score', 'Average QA Score', Number(kpis.avg_qa_score), 85) : undefined} />
+            <KPICard label="Pass Rate" value={`${kpis.pass_rate}%`} sub="Score >= 70" icon={CheckCircle} color="violet" onClick={canLaunchKpiNote ? () => openKpiLauncher('conversion_rate', 'Conversion Rate', Number(kpis.pass_rate), 70) : undefined} />
             {canSeeQueueDepth ? (
               <KPICard 
                 label="Queue Depth" 
@@ -270,6 +289,26 @@ export function Dashboard() {
 
         {/* Right column: Leads (admin) + Alerts */}
         <div className="space-y-4">
+          {canLaunchKpiNote && (
+            <div className="bg-card border border-border rounded-xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-foreground text-sm font-semibold">Workflow Launchers</h3>
+              </div>
+              <div className="space-y-2">
+                <button
+                  onClick={() => openKpiLauncher('total_revenue', 'Total Revenue')}
+                  className="w-full flex items-center justify-between rounded-lg border border-border bg-secondary/15 px-3 py-2 text-sm text-foreground hover:bg-secondary/30 transition-colors"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <MessageSquarePlus size={14} />
+                    {kpiLauncherNoteType === 'KPI_FOLLOW_UP' ? 'Create KPI Follow-up' : 'Create KPI Alert'}
+                  </span>
+                  <ChevronRight size={14} className="text-muted-foreground" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Lead Status - Admin/Manager only */}
           {canSeeLeadInsights && (
             <div className="bg-card border border-border rounded-xl p-4">

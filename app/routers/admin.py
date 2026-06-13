@@ -4,10 +4,11 @@ from sqlalchemy import func
 from typing import List, Optional
 
 from app.database import get_db
-from app.models import Employee, Campaign, Call, CallStatus, SystemLog, UserRole, EmployeeStatus, AuditEvent
-from app.schemas import EmployeeCreate, EmployeeOut, EmployeeUpdate, EmployeeStatusUpdate, CampaignCreate, CampaignOut, SystemMetrics, SystemLogOut, SystemMetricPoint, AlertCreate, AuditEventOut
+from app.models import Employee, Campaign, Call, CallStatus, SystemLog, UserRole, EmployeeStatus, AuditEvent, Team, AgentTransferRequest, EmployeeTeamAssignment, KpiThresholdConfig
+from app.schemas import EmployeeCreate, EmployeeOut, EmployeeUpdate, EmployeeStatusUpdate, CampaignCreate, CampaignOut, SystemMetrics, SystemLogOut, SystemMetricPoint, AlertCreate, AuditEventOut, KpiThresholdCreate, KpiThresholdUpdate, KpiThresholdOut, AgentTransferRequestOut
 from app.routers.auth import get_current_user
 from app.services.audit import log_audit_event
+from app.services.kpi_catalog import get_kpi_catalog, get_kpi_definition, is_valid_kpi_key
 from app.security import get_password_hash
 
 router = APIRouter(prefix="/api/admin", tags=["Admin (Setup)"])
@@ -72,6 +73,30 @@ def _audit_employee_update(
         success=True,
     )
 
+
+def _require_admin(current_user: Employee) -> None:
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Only admins can perform this action.")
+
+
+def _validate_kpi_threshold_scope(team_id: Optional[int], campaign_id: Optional[int]) -> None:
+    if team_id is None and campaign_id is None:
+        raise HTTPException(status_code=400, detail="Must specify either team_id or campaign_id.")
+    if team_id is not None and campaign_id is not None:
+        raise HTTPException(status_code=400, detail="Cannot scope to both team and campaign simultaneously.")
+
+
+def _check_duplicate_active_threshold(db: Session, *, team_id: Optional[int], campaign_id: Optional[int], kpi_key: str, exclude_id: Optional[int] = None) -> None:
+    query = db.query(KpiThresholdConfig).filter(KpiThresholdConfig.kpi_key == kpi_key, KpiThresholdConfig.is_active == True)
+    if team_id is not None:
+        query = query.filter(KpiThresholdConfig.team_id == team_id)
+    if campaign_id is not None:
+        query = query.filter(KpiThresholdConfig.campaign_id == campaign_id)
+    if exclude_id is not None:
+        query = query.filter(KpiThresholdConfig.id != exclude_id)
+    if query.first():
+        raise HTTPException(status_code=400, detail="An active threshold configuration already exists for this scope and KPI.")
+
 # --- Employees ---
 
 @router.post("/employees", response_model=EmployeeOut)
@@ -92,6 +117,10 @@ def create_employee(
     emp_data = employee.model_dump()
     if "password" in emp_data:
         emp_data["hashed_password"] = get_password_hash(emp_data.pop("password"))
+    
+    # Validate and normalize role
+    if "role" in emp_data and emp_data["role"] is not None:
+        emp_data["role"] = _validate_role(emp_data["role"])
     
     new_emp = Employee(**emp_data)
     db.add(new_emp)
@@ -404,3 +433,160 @@ def delete_campaign(
     db.delete(campaign)
     db.commit()
     return {"message": "Campaign deleted successfully"}
+
+
+@router.get("/kpi-catalog")
+def list_kpi_catalog(current_user: Employee = Depends(get_current_user)):
+    _require_admin(current_user)
+    return get_kpi_catalog()
+
+
+@router.post("/kpi-thresholds", response_model=KpiThresholdOut)
+def create_kpi_threshold(
+    payload: KpiThresholdCreate,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    _require_admin(current_user)
+    _validate_kpi_threshold_scope(payload.team_id, payload.campaign_id)
+    if not is_valid_kpi_key(payload.kpi_key):
+        raise HTTPException(status_code=400, detail="Invalid KPI key.")
+    if payload.target_value < 0:
+        raise HTTPException(status_code=400, detail="target_value must be non-negative.")
+    if payload.team_id is not None and db.query(Team).filter(Team.id == payload.team_id).first() is None:
+        raise HTTPException(status_code=400, detail="Team not found.")
+    if payload.campaign_id is not None and db.query(Campaign).filter(Campaign.id == payload.campaign_id).first() is None:
+        raise HTTPException(status_code=400, detail="Campaign not found.")
+    if payload.is_active:
+        _check_duplicate_active_threshold(db, team_id=payload.team_id, campaign_id=payload.campaign_id, kpi_key=payload.kpi_key)
+    definition = get_kpi_definition(payload.kpi_key)
+    threshold = KpiThresholdConfig(
+        team_id=payload.team_id,
+        campaign_id=payload.campaign_id,
+        kpi_key=payload.kpi_key,
+        kpi_label=(payload.kpi_label or (definition["label"] if definition else payload.kpi_key)).strip(),
+        threshold_type=payload.threshold_type,
+        target_value=payload.target_value,
+        is_active=payload.is_active,
+        created_by_id=current_user.id,
+    )
+    db.add(threshold)
+    db.commit()
+    db.refresh(threshold)
+    log_audit_event(
+        db=db,
+        action="KPI_THRESHOLD_CREATE",
+        actor_id=current_user.id,
+        actor_email=current_user.email,
+        target=f"KpiThresholdConfig {threshold.id} ({threshold.kpi_key})",
+        after_state=f"kpi_key={threshold.kpi_key}; active={threshold.is_active}",
+        reason="Admin KPI threshold create",
+        success=True,
+    )
+    return threshold
+
+
+@router.get("/kpi-thresholds", response_model=List[KpiThresholdOut])
+def list_kpi_thresholds(
+    response: Response,
+    team_id: Optional[int] = None,
+    campaign_id: Optional[int] = None,
+    kpi_key: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    _require_admin(current_user)
+    query = db.query(KpiThresholdConfig)
+    if team_id is not None:
+        query = query.filter(KpiThresholdConfig.team_id == team_id)
+    if campaign_id is not None:
+        query = query.filter(KpiThresholdConfig.campaign_id == campaign_id)
+    if kpi_key is not None:
+        query = query.filter(KpiThresholdConfig.kpi_key == kpi_key)
+    if is_active is not None:
+        query = query.filter(KpiThresholdConfig.is_active == is_active)
+    response.headers["X-Total-Count"] = str(query.count())
+    return query.order_by(KpiThresholdConfig.id.asc()).offset(skip).limit(limit).all()
+
+
+@router.patch("/kpi-thresholds/{threshold_id}", response_model=KpiThresholdOut)
+def update_kpi_threshold(
+    threshold_id: int,
+    payload: KpiThresholdUpdate,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    _require_admin(current_user)
+    threshold = db.query(KpiThresholdConfig).filter(KpiThresholdConfig.id == threshold_id).first()
+    if threshold is None:
+        raise HTTPException(status_code=404, detail="Threshold not found.")
+    if payload.target_value is not None:
+        if payload.target_value < 0:
+            raise HTTPException(status_code=400, detail="target_value must be non-negative.")
+        threshold.target_value = payload.target_value
+    if hasattr(payload, "kpi_label") and payload.kpi_label is not None:
+        threshold.kpi_label = payload.kpi_label
+    if hasattr(payload, "threshold_type") and payload.threshold_type is not None:
+        threshold.threshold_type = payload.threshold_type
+    if payload.is_active is not None:
+        if payload.is_active:
+            _check_duplicate_active_threshold(db, team_id=threshold.team_id, campaign_id=threshold.campaign_id, kpi_key=threshold.kpi_key, exclude_id=threshold.id)
+        threshold.is_active = payload.is_active
+    db.commit()
+    db.refresh(threshold)
+    log_audit_event(
+        db=db,
+        action="KPI_THRESHOLD_UPDATE",
+        actor_id=current_user.id,
+        actor_email=current_user.email,
+        target=f"KpiThresholdConfig {threshold.id} ({threshold.kpi_key})",
+        after_state=f"kpi_key={threshold.kpi_key}; active={threshold.is_active}",
+        reason="Admin KPI threshold update",
+        success=True,
+    )
+    return threshold
+
+
+@router.patch("/transfer-requests/{request_id}/review", response_model=AgentTransferRequestOut)
+def review_transfer_request(
+    request_id: int,
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    _require_admin(current_user)
+    request = db.query(AgentTransferRequest).filter(AgentTransferRequest.id == request_id).first()
+    if request is None:
+        raise HTTPException(status_code=404, detail="Transfer request not found.")
+    if request.status != "PENDING":
+        raise HTTPException(status_code=400, detail="Transfer request already reviewed.")
+    new_status = str(payload.get("status", "")).upper()
+    if new_status not in {"APPROVED", "REJECTED"}:
+        raise HTTPException(status_code=400, detail="Invalid review status.")
+    if new_status == "APPROVED":
+        active_assignments = db.query(EmployeeTeamAssignment).filter(
+            EmployeeTeamAssignment.employee_id == request.agent_id,
+            EmployeeTeamAssignment.is_active == True,
+        ).all()
+        if len(active_assignments) != 1 or active_assignments[0].team_id != request.from_team_id:
+            raise HTTPException(status_code=400, detail="Agent must have exactly one active assignment on the from team.")
+        active_assignments[0].is_active = False
+        active_assignments[0].ended_at = func.now()
+        db.add(
+            EmployeeTeamAssignment(
+                employee_id=request.agent_id,
+                team_id=request.to_team_id,
+                is_active=True,
+                created_by_id=current_user.id,
+            )
+        )
+    request.status = new_status
+    request.review_note = payload.get("review_note")
+    request.reviewed_by_id = current_user.id
+    request.reviewed_at = func.now()
+    db.commit()
+    db.refresh(request)
+    return request

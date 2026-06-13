@@ -34,6 +34,12 @@ def _remove_file_if_exists(file_path: str):
             pass
 
 
+def _can_view_raw_call(current_user: Employee, employee_id: int) -> bool:
+    if current_user.role in (UserRole.ADMIN, UserRole.QA, UserRole.HR_MANAGER):
+        return True
+    return current_user.role == UserRole.AGENT and current_user.id == employee_id
+
+
 
 @router.post("/upload", response_model=CallUploadResponse)
 async def upload_audio(
@@ -46,6 +52,8 @@ async def upload_audio(
     """
     Upload an audio file. Validates size/format, saves locally, and triggers processing.
     """
+    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+
     # 0. Role Check: Agent can only upload for themselves
     if current_user.role == UserRole.AGENT and current_user.id != employee_id:
         raise HTTPException(status_code=403, detail="Agents can only upload calls for themselves.")
@@ -112,6 +120,8 @@ async def bulk_upload_audio(
     individually, saves valid files, creates Call records, and triggers
     background task processing. Returns a detailed success/failure report.
     """
+    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+
     try:
         meta_list = json.loads(metadata)
         if not isinstance(meta_list, list):
@@ -299,8 +309,7 @@ def get_call_status(
     if not call:
         raise HTTPException(status_code=404, detail="Call not found")
     
-    # Role Check
-    if current_user.role == UserRole.AGENT and call.employee_id != current_user.id:
+    if not _can_view_raw_call(current_user, call.employee_id):
         raise HTTPException(status_code=403, detail="You do not have permission to view this call.")
         
     # Build structured response for UI (Task-UI04)
@@ -377,8 +386,7 @@ def get_call_audio_file(
     if not call or not call.audio_file_path:
         raise HTTPException(status_code=404, detail="Audio file not found")
     
-    # Role Check
-    if current_user.role == UserRole.AGENT and call.employee_id != current_user.id:
+    if not _can_view_raw_call(current_user, call.employee_id):
         raise HTTPException(status_code=403, detail="You do not have permission to access this file.")
     
     if not os.path.exists(call.audio_file_path):
@@ -396,9 +404,8 @@ def review_call(
     current_user: Employee = Depends(get_current_user)
 ):
     """Update a call with supervisor override score and notes."""
-    # Role Check: Only QA and Admin can review calls
-    if current_user.role == UserRole.AGENT:
-        raise HTTPException(status_code=403, detail="Agents cannot review calls.")
+    if current_user.role not in (UserRole.ADMIN, UserRole.QA, UserRole.HR_MANAGER):
+        raise HTTPException(status_code=403, detail="Access denied.")
 
     call = db.query(Call).filter(Call.id == call_id).first()
     if not call:

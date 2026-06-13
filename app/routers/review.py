@@ -2,17 +2,24 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 import uuid
 from app.database import get_db
-from app.models import GoldenPairCandidate, CandidateStatus
+from app.models import GoldenPairCandidate, CandidateStatus, Employee, UserRole
+from app.routers.auth import get_current_user
 from app.workers.rag_worker import collection, _get_model
 
 router = APIRouter(prefix="/api/review", tags=["HITL Review"])
 
+def _require_review_access(current_user: Employee) -> None:
+    if current_user.role not in (UserRole.ADMIN, UserRole.QA, UserRole.HR_MANAGER):
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+
 @router.get("/queue")
-def get_review_queue(db: Session = Depends(get_db)):
+def get_review_queue(db: Session = Depends(get_db), current_user: Employee = Depends(get_current_user)):
     """
     Fetches the list of pending Golden Pair candidates for human review.
     Provides call context as requested for informed decision making.
     """
+    _require_review_access(current_user)
     candidates = db.query(GoldenPairCandidate)\
                    .filter(GoldenPairCandidate.status == CandidateStatus.PENDING)\
                    .order_by(GoldenPairCandidate.score.desc())\
@@ -32,11 +39,12 @@ def get_review_queue(db: Session = Depends(get_db)):
     ]
 
 @router.post("/{candidate_id}/approve")
-def approve_candidate(candidate_id: int, db: Session = Depends(get_db)):
+def approve_candidate(candidate_id: int, db: Session = Depends(get_db), current_user: Employee = Depends(get_current_user)):
     """
     Approves a candidate, updates its status, and indexes it into the local RAG database.
     Ensures that the campaign_id filter (I-01) is preserved in the vector store.
     """
+    _require_review_access(current_user)
     candidate = db.query(GoldenPairCandidate).filter(GoldenPairCandidate.id == candidate_id).first()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
@@ -73,8 +81,9 @@ def approve_candidate(candidate_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Indexing failed: {str(e)}")
 
 @router.post("/{candidate_id}/reject")
-def reject_candidate(candidate_id: int, db: Session = Depends(get_db)):
+def reject_candidate(candidate_id: int, db: Session = Depends(get_db), current_user: Employee = Depends(get_current_user)):
     """Rejects a candidate and removes it from the review queue."""
+    _require_review_access(current_user)
     candidate = db.query(GoldenPairCandidate).filter(GoldenPairCandidate.id == candidate_id).first()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")

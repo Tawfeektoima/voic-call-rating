@@ -106,6 +106,31 @@ class AcousticAnalyzer:
             "surprised": "agitation"
         }
 
+    def release_resources(self):
+        """
+        Explicitly unload the acoustic model between tasks so low-VRAM GPUs
+        do not carry model state across jobs.
+        """
+        if self.model is not None:
+            try:
+                self.model.to("cpu")
+            except Exception:
+                pass
+            del self.model
+            self.model = None
+
+        if self.feature_extractor is not None:
+            del self.feature_extractor
+            self.feature_extractor = None
+
+        self.id2label = {}
+
+        import gc
+        gc.collect()
+        if torch is not None and hasattr(torch, "cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+
     def analyze_segments(self, audio_path: str, segments: list) -> list:
         """
         Processes a list of audio segments and returns an emotion timeline.
@@ -173,17 +198,6 @@ class AcousticAnalyzer:
         
         # 4. Offload model to free VRAM immediately
         print("[*] Offloading Acoustic Model and clearing cache...")
-        if self.model is not None:
-            self.model.to("cpu")
-            del self.model
-            del self.feature_extractor
-            self.model = None
-            self.feature_extractor = None
-
-        import gc
-        gc.collect()
-        if torch is not None and hasattr(torch, "cuda") and torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
+        self.release_resources()
             
         return emotion_timeline
