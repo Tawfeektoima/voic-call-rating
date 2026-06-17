@@ -5,8 +5,8 @@ import {
   ShieldCheck, HelpCircle, Loader2, Search
 } from 'lucide-react';
 import { cn } from '../components/ui/utils';
-import api, { getApprovedRoles, getEmployeesPaginated, updateEmployee } from '../lib/api';
-import { Agent, RoleDefinition } from '../lib/types';
+import api, { assignQaScope, assignTeamLeader, getApprovedRoles, getCampaigns, getEmployeesPaginated, getTeamsDirectory, updateEmployee } from '../lib/api';
+import { Agent, Campaign, RoleDefinition, TeamDirectoryOut } from '../lib/types';
 import { useApp } from '../context/AppContext';
 
 interface AgentPreview {
@@ -59,6 +59,8 @@ export function HRManagement() {
   const [dirPage, setDirPage] = useState(1);
   const [updatingEmployeeId, setUpdatingEmployeeId] = useState<number | null>(null);
   const [roleOptions, setRoleOptions] = useState<RoleDefinition[]>(FALLBACK_ROLE_OPTIONS);
+  const [teams, setTeams] = useState<TeamDirectoryOut[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
 
   const LIMIT = 10;
   const canAssignAdmin = currentUser?.role === 'admin';
@@ -86,6 +88,24 @@ export function HRManagement() {
     }
   }, []);
 
+  const fetchTeams = useCallback(async () => {
+    try {
+      const data = await getTeamsDirectory({ active_only: true });
+      setTeams(data);
+    } catch (err) {
+      console.error('Failed to load teams:', err);
+    }
+  }, []);
+
+  const fetchCampaigns = useCallback(async () => {
+    try {
+      const data = await getCampaigns();
+      setCampaigns(data);
+    } catch (err) {
+      console.error('Failed to load campaigns:', err);
+    }
+  }, []);
+
   useEffect(() => {
     if (activeTab === 'directory') {
       fetchDirectory(dirPage, dirSearch, dirRole, dirStatus);
@@ -106,11 +126,22 @@ export function HRManagement() {
     };
   }, []);
 
+  useEffect(() => {
+    fetchTeams();
+  }, [fetchTeams]);
+
+  useEffect(() => {
+    fetchCampaigns();
+  }, [fetchCampaigns]);
+
   const handleUpdateRole = async (employeeId: number, newRole: string) => {
     setUpdatingEmployeeId(employeeId);
     try {
       await updateEmployee(employeeId, { role: newRole });
-      fetchDirectory(dirPage, dirSearch, dirRole, dirStatus);
+      await Promise.all([
+        fetchDirectory(dirPage, dirSearch, dirRole, dirStatus),
+        fetchTeams(),
+      ]);
     } catch (err: any) {
       console.error(err);
       alert(err.response?.data?.detail || 'Failed to update role');
@@ -127,6 +158,58 @@ export function HRManagement() {
     } catch (err: any) {
       console.error(err);
       alert(err.response?.data?.detail || 'Failed to update status');
+    } finally {
+      setUpdatingEmployeeId(null);
+    }
+  };
+
+  const handleAssignTeam = async (employeeId: number, teamIdValue: string) => {
+    const currentTeam = teams.find((team) => team.leader_id === employeeId);
+    const targetTeamId = teamIdValue ? Number(teamIdValue) : currentTeam?.id;
+    if (!targetTeamId) {
+      return;
+    }
+
+    setUpdatingEmployeeId(employeeId);
+    try {
+      await assignTeamLeader(targetTeamId, teamIdValue ? employeeId : null);
+      await Promise.all([
+        fetchDirectory(dirPage, dirSearch, dirRole, dirStatus),
+        fetchTeams(),
+      ]);
+    } catch (err: any) {
+      console.error(err);
+      alert(err.response?.data?.detail || 'Failed to update team leader assignment');
+    } finally {
+      setUpdatingEmployeeId(null);
+    }
+  };
+
+  const handleAssignQaScope = async (employeeId: number, field: 'team' | 'campaign', value: string) => {
+    const employee = employees.find((item) => item.id === employeeId);
+    if (!employee) return;
+
+    const nextTeamId = field === 'team' ? (value ? Number(value) : null) : (employee.qa_scope_team_id ?? null);
+    const nextTeam = nextTeamId ? teams.find((team) => team.id === nextTeamId) : null;
+    let nextCampaignId = field === 'campaign' ? (value ? Number(value) : null) : (employee.qa_scope_campaign_id ?? null);
+    if (field === 'team') {
+      if (!nextTeamId) {
+        nextCampaignId = null;
+      } else if (nextTeam?.campaign_id && nextCampaignId && nextCampaignId !== nextTeam.campaign_id) {
+        nextCampaignId = null;
+      }
+    }
+
+    setUpdatingEmployeeId(employeeId);
+    try {
+      await assignQaScope(employeeId, {
+        team_id: nextTeamId,
+        campaign_id: nextCampaignId,
+      });
+      await fetchDirectory(dirPage, dirSearch, dirRole, dirStatus);
+    } catch (err: any) {
+      console.error(err);
+      alert(err.response?.data?.detail || 'Failed to update QA scope');
     } finally {
       setUpdatingEmployeeId(null);
     }
@@ -321,7 +404,10 @@ export function HRManagement() {
                       <th className="px-5 py-3 text-xs font-bold text-muted-foreground uppercase">Agent</th>
                       <th className="px-5 py-3 text-xs font-bold text-muted-foreground uppercase">Code</th>
                       <th className="px-5 py-3 text-xs font-bold text-muted-foreground uppercase">Department</th>
+                      <th className="px-5 py-3 text-xs font-bold text-muted-foreground uppercase">Team</th>
                       <th className="px-5 py-3 text-xs font-bold text-muted-foreground uppercase">Role</th>
+                      <th className="px-5 py-3 text-xs font-bold text-muted-foreground uppercase">QA Team Scope</th>
+                      <th className="px-5 py-3 text-xs font-bold text-muted-foreground uppercase">QA Campaign Scope</th>
                       <th className="px-5 py-3 text-xs font-bold text-muted-foreground uppercase">Status</th>
                     </tr>
                   </thead>
@@ -332,6 +418,13 @@ export function HRManagement() {
                       const rowRoleOptions = selectableRoles.some((role) => role.role.toLowerCase() === agentRole)
                         ? selectableRoles
                         : [currentRoleOption, ...selectableRoles].filter(Boolean) as RoleDefinition[];
+                      const ledTeam = teams.find((team) => team.leader_id === agent.id);
+                      const isTeamLeader = agentRole === 'team_leader';
+                      const isQa = agentRole === 'qa';
+                      const qaTeam = agent.qa_scope_team_id ? teams.find((team) => team.id === agent.qa_scope_team_id) : null;
+                      const scopedCampaigns = qaTeam?.campaign_id
+                        ? campaigns.filter((campaign) => campaign.id === qaTeam.campaign_id)
+                        : campaigns;
                       const isSelf = currentUser?.id === agent.id || currentUser?.email === agent.email;
                       return (
                         <tr key={agent.id} className={cn("hover:bg-secondary/20 transition-all", agent.status !== 'active' && "bg-red-500/5")}>
@@ -350,6 +443,21 @@ export function HRManagement() {
                           <td className="px-5 py-3 text-xs text-muted-foreground">{agent.department || 'N/A'}</td>
                           <td className="px-5 py-3">
                             <select
+                              value={ledTeam ? String(ledTeam.id) : ''}
+                              disabled={!isTeamLeader || updatingEmployeeId === agent.id}
+                              onChange={(e) => handleAssignTeam(agent.id, e.target.value)}
+                              className="min-w-40 bg-secondary border border-border text-foreground text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <option value="">{isTeamLeader ? 'Unassigned' : 'Only Team Leaders'}</option>
+                              {teams.map((team) => (
+                                <option key={team.id} value={team.id}>
+                                  {team.name}{team.leader_id && team.leader_id !== agent.id ? ` - ${team.leader_name || 'Assigned'}` : ''}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-5 py-3">
+                            <select
                               value={agentRole}
                               disabled={isSelf || updatingEmployeeId === agent.id}
                               onChange={(e) => handleUpdateRole(agent.id, e.target.value)}
@@ -357,6 +465,36 @@ export function HRManagement() {
                             >
                               {rowRoleOptions.map((role) => (
                                 <option key={role.role} value={role.role.toLowerCase()}>{role.label}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-5 py-3">
+                            <select
+                              value={agent.qa_scope_team_id ? String(agent.qa_scope_team_id) : ''}
+                              disabled={!isQa || updatingEmployeeId === agent.id}
+                              onChange={(e) => handleAssignQaScope(agent.id, 'team', e.target.value)}
+                              className="min-w-40 bg-secondary border border-border text-foreground text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <option value="">{isQa ? 'No team scope' : 'Only QA'}</option>
+                              {teams.map((team) => (
+                                <option key={team.id} value={team.id}>
+                                  {team.name}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-5 py-3">
+                            <select
+                              value={agent.qa_scope_campaign_id ? String(agent.qa_scope_campaign_id) : ''}
+                              disabled={!isQa || updatingEmployeeId === agent.id}
+                              onChange={(e) => handleAssignQaScope(agent.id, 'campaign', e.target.value)}
+                              className="min-w-40 bg-secondary border border-border text-foreground text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <option value="">{isQa ? 'All campaigns in scope' : 'Only QA'}</option>
+                              {scopedCampaigns.map((campaign) => (
+                                <option key={campaign.id} value={campaign.id}>
+                                  {campaign.name}
+                                </option>
                               ))}
                             </select>
                           </td>

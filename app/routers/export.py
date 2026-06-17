@@ -15,6 +15,7 @@ from app.routers.auth import get_current_user
 from app.services.export import ExportService
 from app.services.audit import log_audit_event
 from app.permissions import Permission, has_permission
+from app.services.team_scope import scope_call_query_to_qa
 
 router = APIRouter(prefix="/api/export", tags=["Data Export"])
 
@@ -154,6 +155,8 @@ def export_calls_csv(
     _audit_export_attempt(db, current_user, "CSV Export", filters_str, True, "Data Export")
 
     query = db.query(Call).join(Employee)
+    if current_user.role == UserRole.QA:
+        query = scope_call_query_to_qa(query, db, current_user.id)
     if campaign_id:
         query = query.filter(Call.campaign_id == campaign_id)
     if department:
@@ -259,6 +262,8 @@ def export_dataset_xlsx(
         end_date=end_dt,
         agent_role=agent_role,
         current_user_role=current_user.role,
+        qa_scope_team_id=current_user.qa_scope_team_id if current_user.role == UserRole.QA else None,
+        qa_scope_campaign_id=current_user.qa_scope_campaign_id if current_user.role == UserRole.QA else None,
         offset=offset,
         limit=limit,
     )
@@ -299,6 +304,8 @@ def export_transcripts_zip(
     _audit_export_attempt(db, current_user, "ZIP Transcripts Export", filters_str, True, "Transcript Export")
 
     query = db.query(Call).join(Employee)
+    if current_user.role == UserRole.QA:
+        query = scope_call_query_to_qa(query, db, current_user.id)
     if campaign_id:
         query = query.filter(Call.campaign_id == campaign_id)
     if department:

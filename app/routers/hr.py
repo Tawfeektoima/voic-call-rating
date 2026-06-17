@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Response
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
-from sqlalchemy import func, cast, Date, Integer
+from sqlalchemy.orm import Session, aliased
+from sqlalchemy import func, cast, Date, Integer, and_, or_, case
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 import io
@@ -9,7 +9,7 @@ import pandas as pd
 
 from app.config import get_settings
 from app.database import get_db
-from app.models import AgentViolation, Employee, UserRole, SystemLog, Call, Campaign
+from app.models import AgentViolation, Employee, UserRole, SystemLog, Call, Campaign, EmployeeTeamAssignment, Team
 from app.routers.auth import get_current_user
 from app.schemas import (
     AgentViolationHistory,
@@ -17,6 +17,7 @@ from app.schemas import (
     ViolationSummaryRow,
     PendingViolationOut,
     ViolationStats,
+    ViolationApprovalUpdate,
     EmployeeCreate,
     BulkEmployeeFailure,
     BulkEmployeeResult,
@@ -26,10 +27,13 @@ from app.security import get_password_hash
 from app.security import validate_password_strength, PASSWORD_STRENGTH_MESSAGE
 from app.permissions import normalize_role_value
 from app.services.employee_identity import hash_national_id, normalize_contact_email, normalize_employee_code, normalize_employee_email
+from app.services.audit import log_audit_event
 
 router = APIRouter(prefix="/api/hr", tags=["HR Violations"])
 
 HR_ROLES = [UserRole.ADMIN, UserRole.HR_MANAGER, UserRole.QA]
+QA_APPROVER_ROLES = [UserRole.ADMIN, UserRole.QA]
+HR_APPROVER_ROLES = [UserRole.ADMIN, UserRole.HR_MANAGER]
 BULK_ONBOARDING_ROLES = (UserRole.AGENT, UserRole.QA, UserRole.HR_MANAGER)
 
 
@@ -57,10 +61,59 @@ def _normalize_bulk_employee_identity(raw_email: str | None, raw_employee_code: 
         return str(raw_email or "").strip(), employee_code, str(exc)
     return email, employee_code, None
 
+
+def _validate_team_filter(db: Session, team_id: Optional[int]) -> None:
+    if team_id is None:
+        return
+    team = db.query(Team.id).filter(Team.id == team_id).first()
+    if team is None:
+        raise HTTPException(status_code=404, detail="Team not found.")
+
+
+def _resolve_violation_scope(current_user: Employee, requested_team_id: Optional[int]) -> tuple[Optional[int], Optional[int]]:
+    if current_user.role != UserRole.QA:
+        return requested_team_id, None
+    assigned_team_id = current_user.qa_scope_team_id
+    assigned_campaign_id = current_user.qa_scope_campaign_id
+    if requested_team_id is not None and requested_team_id != assigned_team_id:
+        raise HTTPException(status_code=403, detail="You do not have permission to view another team's violations.")
+    return (assigned_team_id if assigned_team_id is not None else -1), assigned_campaign_id
+
+
+def _apply_violation_team_filter(query, team_id: Optional[int], campaign_id: Optional[int], assignment_alias):
+    query = query.outerjoin(
+        assignment_alias,
+        and_(
+            assignment_alias.employee_id == AgentViolation.employee_id,
+            assignment_alias.assigned_at <= AgentViolation.created_at,
+            or_(assignment_alias.ended_at == None, assignment_alias.ended_at >= AgentViolation.created_at),
+        ),
+    )
+    if team_id is not None:
+        query = query.filter(assignment_alias.team_id == team_id)
+    if campaign_id is not None:
+        query = query.filter(AgentViolation.campaign_id == campaign_id)
+    return query
+
+
+def _serialize_violation_state(violation: AgentViolation) -> str:
+    return (
+        f"hr_flagged={violation.hr_flagged};"
+        f" qa_approved={violation.qa_approved};"
+        f" qa_approved_by_id={violation.qa_approved_by_id};"
+        f" qa_approved_at={violation.qa_approved_at};"
+        f" qa_approval_note={violation.qa_approval_note};"
+        f" hr_approved={violation.hr_approved};"
+        f" hr_approved_by_id={violation.hr_approved_by_id};"
+        f" hr_approved_at={violation.hr_approved_at};"
+        f" hr_approval_note={violation.hr_approval_note}"
+    )
+
 @router.get("/violations/summary", response_model=List[ViolationSummaryRow])
 def get_violations_summary(
     limit: int = Query(50, ge=1, le=500, description="Maximum agents to return"),
     offset: int = Query(0, ge=0, description="Result offset"),
+    team_id: Optional[int] = Query(None, ge=1, description="Optional team filter"),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
@@ -71,6 +124,9 @@ def get_violations_summary(
     if current_user.role not in HR_ROLES:
         raise HTTPException(status_code=403, detail="Access denied.")
 
+    _validate_team_filter(db, team_id)
+    team_id, campaign_id = _resolve_violation_scope(current_user, team_id)
+    assignment_alias = aliased(EmployeeTeamAssignment)
     summary_query = (
         db.query(
             AgentViolation.employee_id,
@@ -79,17 +135,24 @@ def get_violations_summary(
             func.sum(func.cast(AgentViolation.severity == 'high', Integer)).label("high_count"),
             func.sum(func.cast(AgentViolation.severity == 'medium', Integer)).label("medium_count"),
             func.sum(func.cast(AgentViolation.severity == 'low', Integer)).label("low_count"),
-            func.sum(func.cast(AgentViolation.hr_flagged == True, Integer)).label("hr_flagged_count"),
+            func.sum(case((and_(AgentViolation.hr_flagged == True, AgentViolation.qa_approved == True, AgentViolation.hr_approved == False), 1), else_=0)).label("hr_flagged_count"),
             func.sum(AgentViolation.score_deduction).label("total_deductions"),
             func.max(AgentViolation.created_at).label("last_violation_at")
         )
         .join(Employee, AgentViolation.employee_id == Employee.id)
+    )
+    summary_query = _apply_violation_team_filter(summary_query, team_id, campaign_id, assignment_alias)
+    summary_query = (
+        summary_query
         .group_by(AgentViolation.employee_id, Employee.name)
+        .order_by(func.max(AgentViolation.created_at).desc())
+        .offset(offset)
+        .limit(limit)
         .all()
     )
 
     results = []
-    for row in summary_query[offset:offset + limit]:
+    for row in summary_query:
         results.append(ViolationSummaryRow(
             employee_id=row.employee_id,
             employee_name=row.employee_name,
@@ -104,10 +167,72 @@ def get_violations_summary(
 
     return results
 
+@router.get("/violations/qa-pending", response_model=List[PendingViolationOut])
+def get_pending_qa_violations(
+    limit: int = Query(50, ge=1, le=500, description="Maximum violations to return"),
+    offset: int = Query(0, ge=0, description="Result offset"),
+    team_id: Optional[int] = Query(None, ge=1, description="Optional team filter"),
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    """
+    Returns violations awaiting QA approval before they can move to HR.
+    Accessible by: admin, qa.
+    """
+    if current_user.role not in QA_APPROVER_ROLES:
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    _validate_team_filter(db, team_id)
+    team_id, campaign_id = _resolve_violation_scope(current_user, team_id)
+    assignment_alias = aliased(EmployeeTeamAssignment)
+    team_alias = aliased(Team)
+    severity_rank = case(
+        (AgentViolation.severity == "high", 0),
+        (AgentViolation.severity == "medium", 1),
+        (AgentViolation.severity == "low", 2),
+        else_=3,
+    )
+    violations = db.query(
+        AgentViolation,
+        Employee,
+        team_alias.id.label("team_id"),
+        team_alias.name.label("team_name"),
+    ).join(Employee, AgentViolation.employee_id == Employee.id)
+    violations = _apply_violation_team_filter(violations, team_id, campaign_id, assignment_alias)
+    violations = (
+        violations
+        .outerjoin(team_alias, assignment_alias.team_id == team_alias.id)
+        .filter(AgentViolation.hr_flagged == True)
+        .filter(AgentViolation.qa_approved == False)
+        .order_by(severity_rank.asc(), AgentViolation.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    return [
+        PendingViolationOut(
+            violation_id=v.id,
+            employee_id=v.employee_id,
+            employee_name=emp.name,
+            team_id=scoped_team_id,
+            team_name=scoped_team_name,
+            call_id=v.call_id,
+            violation_type=v.violation_id,
+            severity=v.severity,
+            occurrence=v.occurrence,
+            penalty_tier=v.penalty_tier,
+            evidence=v.evidence,
+            created_at=v.created_at,
+        )
+        for v, emp, scoped_team_id, scoped_team_name in violations
+    ]
+
 @router.get("/violations/pending", response_model=List[PendingViolationOut])
 def get_pending_hr_violations(
     limit: int = Query(50, ge=1, le=500, description="Maximum violations to return"),
     offset: int = Query(0, ge=0, description="Result offset"),
+    team_id: Optional[int] = Query(None, ge=1, description="Optional team filter"),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
@@ -115,23 +240,49 @@ def get_pending_hr_violations(
     Returns violations where hr_flagged=True, ordered by severity then date.
     Accessible by: admin, hr_manager only.
     """
-    if current_user.role not in HR_ROLES:
+    if current_user.role not in HR_APPROVER_ROLES:
         raise HTTPException(status_code=403, detail="Access denied.")
 
+    _validate_team_filter(db, team_id)
+    team_id, campaign_id = _resolve_violation_scope(current_user, team_id)
+    assignment_alias = aliased(EmployeeTeamAssignment)
+    team_alias = aliased(Team)
+    severity_rank = case(
+        (AgentViolation.severity == "high", 0),
+        (AgentViolation.severity == "medium", 1),
+        (AgentViolation.severity == "low", 2),
+        else_=3,
+    )
     violations = (
-        db.query(AgentViolation, Employee)
+        db.query(
+            AgentViolation,
+            Employee,
+            team_alias.id.label("team_id"),
+            team_alias.name.label("team_name"),
+        )
         .join(Employee, AgentViolation.employee_id == Employee.id)
+    )
+    violations = _apply_violation_team_filter(violations, team_id, campaign_id, assignment_alias)
+    violations = (
+        violations
+        .outerjoin(team_alias, assignment_alias.team_id == team_alias.id)
         .filter(AgentViolation.hr_flagged == True)
-        .order_by(AgentViolation.created_at.desc())
+        .filter(AgentViolation.qa_approved == True)
+        .filter(AgentViolation.hr_approved == False)
+        .order_by(severity_rank.asc(), AgentViolation.created_at.desc())
+        .offset(offset)
+        .limit(limit)
         .all()
     )
 
     results = []
-    for v, emp in violations[offset:offset + limit]:
+    for v, emp, scoped_team_id, scoped_team_name in violations:
         results.append(PendingViolationOut(
             violation_id=v.id,
             employee_id=v.employee_id,
             employee_name=emp.name,
+            team_id=scoped_team_id,
+            team_name=scoped_team_name,
             call_id=v.call_id,
             violation_type=v.violation_id,
             severity=v.severity,
@@ -144,6 +295,7 @@ def get_pending_hr_violations(
 
 @router.get("/violations/stats", response_model=ViolationStats)
 def get_violation_stats(
+    team_id: Optional[int] = Query(None, ge=1, description="Optional team filter"),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
@@ -153,15 +305,34 @@ def get_violation_stats(
     if current_user.role not in HR_ROLES:
         raise HTTPException(status_code=403, detail="Access denied.")
 
+    _validate_team_filter(db, team_id)
+    team_id, campaign_id = _resolve_violation_scope(current_user, team_id)
     now = datetime.now(timezone.utc)
     start_of_today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     start_of_week = start_of_today - timedelta(days=now.weekday())
+    assignment_alias = aliased(EmployeeTeamAssignment)
 
-    total_today = db.query(func.count(AgentViolation.id)).filter(AgentViolation.created_at >= start_of_today).scalar() or 0
-    total_week = db.query(func.count(AgentViolation.id)).filter(AgentViolation.created_at >= start_of_week).scalar() or 0
+    total_today = _apply_violation_team_filter(
+        db.query(func.count(AgentViolation.id)).filter(AgentViolation.created_at >= start_of_today),
+        team_id,
+        campaign_id,
+        assignment_alias,
+    ).scalar() or 0
+    total_week = _apply_violation_team_filter(
+        db.query(func.count(AgentViolation.id)).filter(AgentViolation.created_at >= start_of_week),
+        team_id,
+        campaign_id,
+        aliased(EmployeeTeamAssignment),
+    ).scalar() or 0
     
+    most_common_query = db.query(AgentViolation.violation_id, func.count(AgentViolation.id).label("count"))
     most_common = (
-        db.query(AgentViolation.violation_id, func.count(AgentViolation.id).label("count"))
+        _apply_violation_team_filter(
+            most_common_query,
+            team_id,
+            campaign_id,
+            aliased(EmployeeTeamAssignment),
+        )
         .group_by(AgentViolation.violation_id)
         .order_by(func.count(AgentViolation.id).desc())
         .first()
@@ -169,10 +340,24 @@ def get_violation_stats(
     most_common_id = most_common.violation_id if most_common else None
     most_common_count = most_common.count if most_common else 0
 
-    agents_with_hr = db.query(func.count(func.distinct(AgentViolation.employee_id))).filter(AgentViolation.hr_flagged == True).scalar() or 0
-    auto_fails = db.query(func.count(AgentViolation.id)).filter(
-        AgentViolation.auto_fail == True,
-        AgentViolation.created_at >= start_of_today
+    agents_with_hr = _apply_violation_team_filter(
+        db.query(func.count(func.distinct(AgentViolation.employee_id))).filter(
+            AgentViolation.hr_flagged == True,
+            AgentViolation.qa_approved == True,
+            AgentViolation.hr_approved == False,
+        ),
+        team_id,
+        campaign_id,
+        aliased(EmployeeTeamAssignment),
+    ).scalar() or 0
+    auto_fails = _apply_violation_team_filter(
+        db.query(func.count(AgentViolation.id)).filter(
+            AgentViolation.auto_fail == True,
+            AgentViolation.created_at >= start_of_today,
+        ),
+        team_id,
+        campaign_id,
+        aliased(EmployeeTeamAssignment),
     ).scalar() or 0
 
     return ViolationStats(
@@ -187,6 +372,7 @@ def get_violation_stats(
 @router.get("/violations/trends")
 def get_violation_trends(
     days: int = Query(7, ge=1, le=90, description="Number of days to include"),
+    team_id: Optional[int] = Query(None, ge=1, description="Optional team filter"),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
@@ -196,14 +382,16 @@ def get_violation_trends(
     if current_user.role not in HR_ROLES:
         raise HTTPException(status_code=403, detail="Access denied.")
 
+    _validate_team_filter(db, team_id)
+    team_id, campaign_id = _resolve_violation_scope(current_user, team_id)
     since = datetime.now(timezone.utc) - timedelta(days=days)
+    results_query = db.query(
+        cast(AgentViolation.created_at, Date).label("date"),
+        AgentViolation.severity,
+        func.count(AgentViolation.id).label("count"),
+    ).filter(AgentViolation.created_at >= since)
     results = (
-        db.query(
-            cast(AgentViolation.created_at, Date).label("date"),
-            AgentViolation.severity,
-            func.count(AgentViolation.id).label("count"),
-        )
-        .filter(AgentViolation.created_at >= since)
+        _apply_violation_team_filter(results_query, team_id, campaign_id, aliased(EmployeeTeamAssignment))
         .group_by(cast(AgentViolation.created_at, Date), AgentViolation.severity)
         .order_by(cast(AgentViolation.created_at, Date))
         .all()
@@ -231,6 +419,7 @@ def get_agent_violations(
     severity: Optional[str] = None,
     limit: int = Query(50, ge=1, le=200, description="Maximum violations to return"),
     offset: int = Query(0, ge=0, description="Result offset"),
+    team_id: Optional[int] = Query(None, ge=1, description="Optional team filter"),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
@@ -254,7 +443,13 @@ def get_agent_violations(
     if not employee:
         raise HTTPException(status_code=404, detail="Employee not found")
 
+    _validate_team_filter(db, team_id)
+    team_id, campaign_id = _resolve_violation_scope(current_user, team_id)
     query = db.query(AgentViolation).filter(AgentViolation.employee_id == employee_id)
+    if team_id is not None:
+        query = _apply_violation_team_filter(query, team_id, campaign_id, aliased(EmployeeTeamAssignment))
+    elif campaign_id is not None:
+        query = query.filter(AgentViolation.campaign_id == campaign_id)
     if severity:
         query = query.filter(AgentViolation.severity == severity)
     
@@ -272,6 +467,101 @@ def get_agent_violations(
         total_deductions=total_deductions,
         violations=v_outs
     )
+
+
+@router.patch("/violations/{violation_id}/approve", response_model=AgentViolationOut)
+def approve_violation(
+    violation_id: int,
+    payload: ViolationApprovalUpdate,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    """
+    Marks a pending HR violation as reviewed/approved by HR.
+    Accessible by: admin, hr_manager.
+    """
+    if current_user.role not in HR_APPROVER_ROLES:
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    violation = db.query(AgentViolation).filter(AgentViolation.id == violation_id).first()
+    if violation is None:
+        raise HTTPException(status_code=404, detail="Violation not found.")
+    if not violation.hr_flagged:
+        raise HTTPException(status_code=400, detail="Violation is not marked for HR review.")
+    if violation.hr_approved:
+        raise HTTPException(status_code=400, detail="Violation already approved.")
+
+    if not violation.qa_approved:
+        raise HTTPException(status_code=400, detail="Violation must be approved by QA first.")
+
+    previous_state = _serialize_violation_state(violation)
+
+    violation.hr_approved = True
+    violation.hr_approved_by_id = current_user.id
+    violation.hr_approved_at = datetime.now(timezone.utc)
+    violation.hr_approval_note = (payload.note or "").strip() or None
+    db.commit()
+    db.refresh(violation)
+
+    log_audit_event(
+        db=db,
+        action="HR_VIOLATION_APPROVE",
+        actor_id=current_user.id,
+        actor_email=current_user.email,
+        target=f"Violation #{violation.id}",
+        before_state=previous_state,
+        after_state=_serialize_violation_state(violation),
+        reason=violation.hr_approval_note or "HR approval recorded",
+        success=True,
+    )
+
+    return AgentViolationOut.model_validate(violation)
+
+
+@router.patch("/violations/{violation_id}/qa-approve", response_model=AgentViolationOut)
+def qa_approve_violation(
+    violation_id: int,
+    payload: ViolationApprovalUpdate,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    """
+    Marks a violation as quality-approved so it can move to HR review.
+    Accessible by: admin, qa.
+    """
+    if current_user.role not in QA_APPROVER_ROLES:
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    violation = db.query(AgentViolation).filter(AgentViolation.id == violation_id).first()
+    if violation is None:
+        raise HTTPException(status_code=404, detail="Violation not found.")
+    if not violation.hr_flagged:
+        raise HTTPException(status_code=400, detail="Violation is not marked for HR review.")
+    if violation.qa_approved:
+        raise HTTPException(status_code=400, detail="Violation already approved by QA.")
+
+    previous_state = _serialize_violation_state(violation)
+
+    violation.qa_approved = True
+    violation.qa_approved_by_id = current_user.id
+    violation.qa_approved_at = datetime.now(timezone.utc)
+    violation.qa_approval_note = (payload.note or "").strip() or None
+    db.commit()
+    db.refresh(violation)
+
+    log_audit_event(
+        db=db,
+        action="QA_VIOLATION_APPROVE",
+        actor_id=current_user.id,
+        actor_email=current_user.email,
+        target=f"Violation #{violation.id}",
+        before_state=previous_state,
+        after_state=_serialize_violation_state(violation),
+        reason=violation.qa_approval_note or "QA approval recorded",
+        success=True,
+    )
+
+    return AgentViolationOut.model_validate(violation)
 
 
 @router.get("/alarms/pending")

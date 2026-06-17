@@ -1,8 +1,8 @@
 import json
 from datetime import datetime
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
-from app.models import Call, CallStatus
+from sqlalchemy import func, desc, and_
+from app.models import Call, CallStatus, EmployeeTeamAssignment
 from app.schemas import CommonError
 from typing import List, Optional
 
@@ -142,7 +142,9 @@ def calculate_core_kpis(
     db: Session,
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
-    employee_id: Optional[int] = None
+    employee_id: Optional[int] = None,
+    team_id: Optional[int] = None,
+    campaign_id: Optional[int] = None,
 ) -> dict:
     """
     Calculates the core KPIs for the dashboard and system routers in a centralized place.
@@ -178,6 +180,24 @@ def calculate_core_kpis(
         processing_query = processing_query.filter(Call.employee_id == employee_id)
         passed_query = passed_query.filter(Call.employee_id == employee_id)
         today_query = today_query.filter(Call.employee_id == employee_id)
+    elif team_id is not None:
+        join_condition = and_(
+            Call.employee_id == EmployeeTeamAssignment.employee_id,
+            EmployeeTeamAssignment.is_active == True,
+        )
+        total_calls_query = total_calls_query.join(EmployeeTeamAssignment, join_condition).filter(EmployeeTeamAssignment.team_id == team_id)
+        avg_score_query = avg_score_query.join(EmployeeTeamAssignment, join_condition).filter(EmployeeTeamAssignment.team_id == team_id)
+        pending_query = pending_query.join(EmployeeTeamAssignment, join_condition).filter(EmployeeTeamAssignment.team_id == team_id)
+        processing_query = processing_query.join(EmployeeTeamAssignment, join_condition).filter(EmployeeTeamAssignment.team_id == team_id)
+        passed_query = passed_query.join(EmployeeTeamAssignment, join_condition).filter(EmployeeTeamAssignment.team_id == team_id)
+        today_query = today_query.join(EmployeeTeamAssignment, join_condition).filter(EmployeeTeamAssignment.team_id == team_id)
+        if campaign_id is not None:
+            total_calls_query = total_calls_query.filter(Call.campaign_id == campaign_id)
+            avg_score_query = avg_score_query.filter(Call.campaign_id == campaign_id)
+            pending_query = pending_query.filter(Call.campaign_id == campaign_id)
+            processing_query = processing_query.filter(Call.campaign_id == campaign_id)
+            passed_query = passed_query.filter(Call.campaign_id == campaign_id)
+            today_query = today_query.filter(Call.campaign_id == campaign_id)
 
     # Apply date filters
     if date_from:

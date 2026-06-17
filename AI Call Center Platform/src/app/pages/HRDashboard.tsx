@@ -1,9 +1,9 @@
 import React, { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router";
-import { 
+import {
   ShieldAlert, AlertTriangle, CheckCircle2, TrendingUp, Search,
-  ChevronDown, ChevronRight, Activity, Clock, XCircle
+  ChevronDown, ChevronRight, Activity, Clock, XCircle, BriefcaseBusiness
 } from "lucide-react";
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend
@@ -11,9 +11,11 @@ import {
 import { 
   useViolationStats, useViolationsSummary, useViolationTrends, useAgentViolations 
 } from "../hooks/useViolations";
-import { CallViolation } from "../lib/types";
+import { CallViolation, PendingViolation } from "../lib/types";
 import { useApp } from "../context/AppContext";
 import { buildNotesComposeUrl } from "../lib/noteNavigation";
+import { approveHrViolation, approveQaViolation, getApiErrorMessage, getPendingHrViolations, getPendingQaViolations, getTeamsDirectory } from "../lib/api";
+import { toast } from "sonner";
 
 const PENALTY_COLOR: Record<string, string> = {
   "Warning":     "text-slate-400",
@@ -32,8 +34,8 @@ const SEVERITY_CONFIG: Record<string, { label: string, dot: string, badge: strin
   low:    { label: "LOW",    dot: "bg-yellow-500", badge: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20" },
 };
 
-function AgentViolationsInline({ employeeId }: { employeeId: number }) {
-  const { data, isLoading } = useAgentViolations(employeeId);
+function AgentViolationsInline({ employeeId, teamId }: { employeeId: number; teamId?: number }) {
+  const { data, isLoading } = useAgentViolations(employeeId, teamId);
   const navigate = useNavigate();
 
   if (isLoading) return <div className="p-4 text-center text-muted-foreground animate-pulse">Loading...</div>;
@@ -67,6 +69,17 @@ function AgentViolationsInline({ employeeId }: { employeeId: number }) {
                   <span className="text-[10px] bg-secondary text-muted-foreground px-1.5 py-0.5 rounded">
                     {v.occurrence}{v.occurrence === 1 ? 'st' : v.occurrence === 2 ? 'nd' : v.occurrence === 3 ? 'rd' : 'th'} offense
                   </span>
+                  {v.hr_flagged && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded border font-bold ${
+                      v.hr_approved
+                        ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                        : v.qa_approved
+                          ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                          : "bg-sky-500/10 text-sky-400 border-sky-500/20"
+                    }`}>
+                      {v.hr_approved ? "HR Approved" : v.qa_approved ? "Pending HR" : "Pending QA"}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-3 text-xs">
                   <span className={`font-bold ${PENALTY_COLOR[v.penalty_tier] || ""}`}>
@@ -84,6 +97,18 @@ function AgentViolationsInline({ employeeId }: { employeeId: number }) {
                   {v.evidence}
                 </div>
               )}
+              {v.qa_approved && v.qa_approved_at && !v.hr_approved && (
+                <div className="mt-2 text-[10px] text-sky-400">
+                  QA approved {new Date(v.qa_approved_at).toLocaleString()}
+                  {v.qa_approval_note ? ` - ${v.qa_approval_note}` : ""}
+                </div>
+              )}
+              {v.hr_approved && v.hr_approved_at && (
+                <div className="mt-2 text-[10px] text-emerald-400">
+                  Approved {new Date(v.hr_approved_at).toLocaleString()}
+                  {v.hr_approval_note ? ` - ${v.hr_approval_note}` : ""}
+                </div>
+              )}
             </div>
           );
         })}
@@ -93,14 +118,25 @@ function AgentViolationsInline({ employeeId }: { employeeId: number }) {
 }
 
 export function HRDashboard() {
-  const { userRole } = useApp();
+  const { userRole, currentUser } = useApp();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const openHrNote = (params: Record<string, string | number | undefined>) => {
     navigate(buildNotesComposeUrl({
       noteType: 'HR_COMPLIANCE',
       ...params,
     }));
   };
+  const isQaView = userRole === "qa";
+  const canApproveHrViolations = userRole === "admin" || userRole === "hr_manager";
+  const canApproveQaViolations = userRole === "admin" || userRole === "qa";
+  const [selectedTeamId, setSelectedTeamId] = useState(
+    userRole === "qa" && currentUser?.qa_scope_team_id ? String(currentUser.qa_scope_team_id) : "all"
+  );
+  const selectedTeam = selectedTeamId === "all" ? undefined : Number(selectedTeamId);
+  const [search, setSearch] = useState("");
+  const [expandedAgent, setExpandedAgent] = useState<number | null>(null);
+  const [sortBy, setSortBy] = useState<"total"|"hr_flags"|"score_impact">("total");
   
   if (userRole !== 'admin' && userRole !== 'hr_manager' && userRole !== 'qa') {
     return (
@@ -112,18 +148,20 @@ export function HRDashboard() {
     );
   }
 
-  const { data: stats } = useViolationStats();
-  const { data: summary } = useViolationsSummary();
-  const { data: trends } = useViolationTrends(7);
-  // Need to fetch pending manually via fetch or another hook, let's just make a fast one
-  // Or just use the API directly with react-query
+  const { data: stats } = useViolationStats(selectedTeam);
+  const { data: summary } = useViolationsSummary(selectedTeam);
+  const { data: trends } = useViolationTrends(7, selectedTeam);
+  const { data: teams } = useQuery({
+    queryKey: ["hr-dashboard-teams"],
+    queryFn: () => getTeamsDirectory({ active_only: true }),
+  });
   const { data: pending } = useQuery({
-    queryKey: ["violations-pending"],
-    queryFn: async () => {
-      const { default: api } = await import("../lib/api");
-      const res = await api.get("/api/hr/violations/pending");
-      return res.data;
-    }
+    queryKey: [isQaView ? "violations-qa-pending" : "violations-pending", selectedTeamId],
+    queryFn: () => (
+      isQaView
+        ? getPendingQaViolations(selectedTeam ? { team_id: selectedTeam } : undefined)
+        : getPendingHrViolations(selectedTeam ? { team_id: selectedTeam } : undefined)
+    ),
   });
 
   const { data: pendingAlarms } = useQuery({
@@ -135,9 +173,25 @@ export function HRDashboard() {
     }
   });
 
-  const [search, setSearch] = useState("");
-  const [expandedAgent, setExpandedAgent] = useState<number | null>(null);
-  const [sortBy, setSortBy] = useState<"total"|"hr_flags"|"score_impact">("total");
+  const approveMutation = useMutation({
+    mutationFn: ({ violationId }: { violationId: number }) => (
+      isQaView ? approveQaViolation(violationId) : approveHrViolation(violationId)
+    ),
+    onSuccess: async () => {
+      toast.success(isQaView ? "Violation approved by QA" : "Violation approved by HR");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["violations-pending"] }),
+        queryClient.invalidateQueries({ queryKey: ["violations-qa-pending"] }),
+        queryClient.invalidateQueries({ queryKey: ["violations-summary"] }),
+        queryClient.invalidateQueries({ queryKey: ["violation-stats"] }),
+        queryClient.invalidateQueries({ queryKey: ["violation-trends"] }),
+        queryClient.invalidateQueries({ queryKey: ["violations"] }),
+      ]);
+    },
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error, "Unable to approve violation."));
+    },
+  });
 
   const filtered = summary
     ?.filter(row => row.employee_name.toLowerCase().includes(search.toLowerCase()))
@@ -156,16 +210,65 @@ export function HRDashboard() {
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">HR Violations Dashboard</h1>
-          <p className="text-sm text-slate-400 mt-1">Platform-wide compliance and penalty tracking</p>
+          <h1 className="text-2xl font-bold text-slate-100">{isQaView ? "QA Violations Queue" : "HR Violations Dashboard"}</h1>
+          <p className="text-sm text-slate-400 mt-1">
+            {isQaView ? "Quality approval queue before HR escalation" : "Team-scoped compliance and penalty tracking"}
+          </p>
+          {isQaView && (
+            <p className="text-xs text-slate-500 mt-2">
+              Scope: {currentUser?.qa_scope_team_name || "No team assigned"}
+              {currentUser?.qa_scope_campaign_name ? ` · ${currentUser.qa_scope_campaign_name}` : ""}
+            </p>
+          )}
         </div>
-        <button
-          onClick={() => openHrNote({ title: 'HR compliance note' })}
-          className="h-10 px-4 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium transition-colors"
-        >
-          Create HR Note
-        </button>
+        <div className="flex items-center gap-3">
+          {!isQaView && (
+            <select
+              className="h-10 min-w-[180px] bg-background border border-border rounded-lg px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              value={selectedTeamId}
+              onChange={(e) => {
+                setSelectedTeamId(e.target.value);
+                setExpandedAgent(null);
+              }}
+            >
+              <option value="all">All teams</option>
+              {(teams || []).map((team) => (
+                <option key={team.id} value={String(team.id)}>
+                  {team.name}
+                </option>
+              ))}
+            </select>
+          )}
+          <button
+            onClick={() => openHrNote({ title: 'HR compliance note', ...(selectedTeam ? { teamId: selectedTeam } : {}) })}
+            className="h-10 px-4 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium transition-colors"
+          >
+            Create HR Note
+          </button>
+        </div>
       </div>
+
+      {!isQaView && (
+        <div className="rounded-2xl border border-border bg-card/70 p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div className="space-y-1">
+            <div className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-primary">
+              <BriefcaseBusiness size={13} />
+              Recruiting
+            </div>
+            <h2 className="text-lg font-semibold text-foreground">Interview pipeline is now part of HR operations</h2>
+            <p className="text-sm text-muted-foreground max-w-2xl">
+              Create interview jobs, manage candidates, issue session invites, upload CVs, and convert accepted candidates into employees from one workspace.
+            </p>
+          </div>
+          <Link
+            to="/hr/interviews"
+            className="h-11 px-4 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium inline-flex items-center justify-center gap-2"
+          >
+            <BriefcaseBusiness size={15} />
+            Open Interview Pipeline
+          </Link>
+        </div>
+      )}
 
       {/* Section 1: Stats Bar */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -187,9 +290,13 @@ export function HRDashboard() {
         <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
           <div className="flex items-start justify-between">
             <div>
-              <p className="text-xs font-medium text-muted-foreground">HR Flags Today</p>
-              <h3 className="text-2xl font-bold text-foreground mt-1">{stats?.agents_with_hr_flags || 0}</h3>
-              <p className="text-xs text-amber-400 mt-1">Pending review</p>
+              <p className="text-xs font-medium text-muted-foreground">
+                {isQaView ? "Pending QA Reviews" : "Agents With Pending HR Flags"}
+              </p>
+              <h3 className="text-2xl font-bold text-foreground mt-1">{isQaView ? (pending?.length || 0) : (stats?.agents_with_hr_flags || 0)}</h3>
+              <p className="text-xs text-amber-400 mt-1">
+                {isQaView ? "Awaiting quality approval" : "Awaiting HR approval"}
+              </p>
             </div>
             <div className="p-2 bg-amber-500/10 rounded-lg">
               <ShieldAlert size={18} className="text-amber-400" />
@@ -286,7 +393,7 @@ export function HRDashboard() {
             <div className="p-4 border-b border-border bg-amber-500/5 flex items-center justify-between">
               <h3 className="font-semibold text-foreground flex items-center gap-2">
                 <ShieldAlert size={16} className="text-amber-500" /> 
-                Pending HR Flags
+                {isQaView ? "Pending QA Review" : "Pending HR Flags"}
               </h3>
               <span className="text-xs font-bold bg-amber-500/20 text-amber-500 px-2 py-0.5 rounded-full">
                 {pending?.length || 0}
@@ -301,22 +408,28 @@ export function HRDashboard() {
                   </div>
                 </div>
               ) : (
-                pending.map((v: any) => (
+                pending.map((v: PendingViolation) => (
                   <div key={v.violation_id} className="bg-secondary/30 border border-border rounded-lg p-3 relative group">
-                    <div className="flex justify-between items-start mb-2">
-                      <p className="text-xs font-bold text-foreground">{v.employee_name}</p>
-                      <button 
-                        onClick={() => navigate(`/calls/${v.call_id}`)}
-                        className="text-[10px] text-indigo-400 hover:text-indigo-300 font-mono flex items-center gap-1 hover:underline"
-                      >
-                        Call #{v.call_id} <ChevronRight size={10} />
-                      </button>
-                      <button
-                        onClick={() => openHrNote({ callId: v.call_id, title: `HR compliance note for call #${v.call_id}` })}
-                        className="text-[10px] text-primary hover:text-indigo-300 flex items-center gap-1"
-                      >
-                        Note <ChevronRight size={10} />
-                      </button>
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                      <div>
+                        <p className="text-xs font-bold text-foreground">{v.employee_name}</p>
+                        <p className="text-[10px] text-muted-foreground mt-1">
+                          {v.team_name || "Unassigned team"} · {new Date(v.created_at).toLocaleDateString()}
+                        </p>
+                      </div>
+                      {(isQaView ? canApproveQaViolations : canApproveHrViolations) && (
+                        <button
+                          onClick={() => approveMutation.mutate({ violationId: v.violation_id })}
+                          disabled={approveMutation.isPending && approveMutation.variables?.violationId === v.violation_id}
+                          className="text-[10px] px-2 py-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/15 disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          {approveMutation.isPending && approveMutation.variables?.violationId === v.violation_id
+                            ? "Approving..."
+                            : isQaView
+                              ? "Approve for HR"
+                              : "Approve"}
+                        </button>
+                      )}
                     </div>
                     <div className="flex flex-wrap items-center gap-2 mb-2">
                       <span className="text-[10px] px-1.5 py-0.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded uppercase font-bold">
@@ -328,6 +441,20 @@ export function HRDashboard() {
                       <span className={`text-[10px] font-bold ${PENALTY_COLOR[v.penalty_tier] || ""}`}>
                         {v.penalty_tier}
                       </span>
+                    </div>
+                    <div className="flex items-center gap-3 text-[10px]">
+                      <button 
+                        onClick={() => navigate(`/calls/${v.call_id}`)}
+                        className="text-indigo-400 hover:text-indigo-300 font-mono flex items-center gap-1 hover:underline"
+                      >
+                        Call #{v.call_id} <ChevronRight size={10} />
+                      </button>
+                      <button
+                        onClick={() => openHrNote({ callId: v.call_id, title: `HR compliance note for call #${v.call_id}`, ...(v.team_id ? { teamId: v.team_id } : {}) })}
+                        className="text-primary hover:text-indigo-300 flex items-center gap-1"
+                      >
+                        Note <ChevronRight size={10} />
+                      </button>
                     </div>
                   </div>
                 ))
@@ -468,7 +595,7 @@ export function HRDashboard() {
                       {expandedAgent === row.employee_id && (
                         <tr>
                           <td colSpan={8} className="p-0 border-b border-border">
-                            <AgentViolationsInline employeeId={row.employee_id} />
+                            <AgentViolationsInline employeeId={row.employee_id} teamId={selectedTeam} />
                           </td>
                         </tr>
                       )}

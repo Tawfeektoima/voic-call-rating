@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 
 from app.main import app
-from app.models import Employee, UserRole, Campaign, Team, EmployeeTeamAssignment, Call, CallStatus
+from app.models import Employee, UserRole, Campaign, Team, EmployeeTeamAssignment, Call, CallStatus, CallOutcome, AttendanceRecord, CampaignType
 from app.routers.auth import get_current_user
 from app.database import SessionLocal
 from app.permissions import (
@@ -299,3 +299,72 @@ def test_team_manager_cannot_access_global_analytics_routes():
         assert response_search.status_code == 403
     finally:
         app.dependency_overrides.clear()
+
+
+def test_team_manager_kpis_support_custom_date_range():
+    app.dependency_overrides[get_current_user] = lambda: mock_tm
+    db = SessionLocal()
+    try:
+        camp = Campaign(
+            id=8580,
+            name="TM Dynamic Range Campaign",
+            type=CampaignType.SALES,
+            evaluation_prompt="Dummy prompt length for dynamic reports",
+            color="#FFF",
+        )
+        team = Team(id=8581, name="TM Dynamic Team", campaign_id=camp.id, manager_id=mock_tm.id, is_active=True)
+        agent = Employee(id=8582, name="Dynamic Agent", email="dynamic_agent@example.com", role=UserRole.AGENT, employee_code="DYN_A1", hashed_password="f", status="active")
+        assignment = EmployeeTeamAssignment(id=8581, employee_id=agent.id, team_id=team.id, is_active=True)
+        in_range_call = Call(
+            id=8581,
+            employee_id=agent.id,
+            campaign_id=camp.id,
+            status=CallStatus.EVALUATED,
+            evaluation_score=90.0,
+            audio_file_path="dyn1",
+            original_filename="dyn1",
+            created_at=datetime(2026, 1, 10, 12, 0, tzinfo=timezone.utc),
+        )
+        out_of_range_call = Call(
+            id=8582,
+            employee_id=agent.id,
+            campaign_id=camp.id,
+            status=CallStatus.EVALUATED,
+            evaluation_score=70.0,
+            audio_file_path="dyn2",
+            original_filename="dyn2",
+            created_at=datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc),
+        )
+        db.add_all([camp, team, agent, assignment, in_range_call, out_of_range_call])
+        db.flush()
+        db.add_all([
+            CallOutcome(call_id=in_range_call.id, campaign_type="sales", primary_outcome="Sale Closed", outcome_value=100.0),
+            CallOutcome(call_id=out_of_range_call.id, campaign_type="sales", primary_outcome="Sale Closed", outcome_value=250.0),
+            AttendanceRecord(id=8581, employee_id=agent.id, attendance_date=datetime(2026, 1, 12, tzinfo=timezone.utc).date(), status="present"),
+            AttendanceRecord(id=8582, employee_id=agent.id, attendance_date=datetime(2026, 2, 12, tzinfo=timezone.utc).date(), status="absent"),
+        ])
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get("/api/team-manager/kpis?start_date=2026-01-01T00:00:00&end_date=2026-01-31T23:59:59")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_sales"] == 1
+    assert data["total_revenue"] == 100.0
+    assert data["attendance_rate"] == 100.0
+    assert data["period_label"] == "2026-01-01 to 2026-01-31"
+
+    agents_response = client.get("/api/team-manager/agents?start_date=2026-01-01T00:00:00&end_date=2026-01-31T23:59:59")
+    assert agents_response.status_code == 200
+    agents = agents_response.json()
+    dynamic_agent = next(item for item in agents if item["agent_id"] == 8582)
+    assert dynamic_agent["sales"] == 1
+    assert dynamic_agent["revenue"] == 100.0
+    assert dynamic_agent["attendance_rate"] == 100.0
+
+    invalid_range = client.get("/api/team-manager/kpis?start_date=2026-02-01T00:00:00&end_date=2026-01-01T00:00:00")
+    assert invalid_range.status_code == 400
+    assert "start_date" in invalid_range.json()["detail"]
+
+    app.dependency_overrides.clear()

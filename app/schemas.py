@@ -49,6 +49,29 @@ class EmployeeStatusUpdate(BaseModel):
     status: str
 
 
+class TeamLeaderAssignmentUpdate(BaseModel):
+    leader_id: Optional[int] = None
+
+
+class QaScopeAssignmentUpdate(BaseModel):
+    team_id: Optional[int] = None
+    campaign_id: Optional[int] = None
+
+
+class TeamDirectoryOut(BaseModel):
+    id: int
+    name: str
+    campaign_id: Optional[int] = None
+    campaign_name: Optional[str] = None
+    manager_id: Optional[int] = None
+    manager_name: Optional[str] = None
+    leader_id: Optional[int] = None
+    leader_name: Optional[str] = None
+    is_active: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class AuditEventOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -111,6 +134,10 @@ class EmployeeOut(BaseModel):
     skills: Optional[dict]
     emotion_history: Optional[List[float]]
     phone_number: Optional[str] = None
+    qa_scope_team_id: Optional[int] = None
+    qa_scope_team_name: Optional[str] = None
+    qa_scope_campaign_id: Optional[int] = None
+    qa_scope_campaign_name: Optional[str] = None
     agent_tenure_days: Optional[int] = 0
     mastery_stats: Optional[AgentMasteryOut] = None
     created_at: datetime
@@ -188,8 +215,493 @@ class MeResponse(BaseModel):
     permissions: List[str] = Field(default_factory=list)
     email: Optional[str] = None
     avatar: Optional[str] = None
+    qa_scope_team_id: Optional[int] = None
+    qa_scope_team_name: Optional[str] = None
+    qa_scope_campaign_id: Optional[int] = None
+    qa_scope_campaign_name: Optional[str] = None
     account_status: str = "active"
     status: str = "active"
+
+
+class InterviewJobCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    description: str = Field(..., min_length=1)
+    department: Optional[str] = Field(None, max_length=255)
+    team_id: Optional[int] = Field(None, ge=1)
+    campaign_id: Optional[int] = Field(None, ge=1)
+    status: str = "draft"
+    base_questions: List[str] = Field(default_factory=list)
+    scoring_weights: Optional[dict] = None
+    mcq_enabled: bool = False
+    mcq_questions: List[dict] = Field(default_factory=list)
+
+
+class InterviewJobUpdate(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = Field(None, min_length=1)
+    department: Optional[str] = Field(None, max_length=255)
+    team_id: Optional[int] = Field(None, ge=1)
+    campaign_id: Optional[int] = Field(None, ge=1)
+    status: Optional[str] = None
+    base_questions: Optional[List[str]] = None
+    scoring_weights: Optional[dict] = None
+    mcq_enabled: Optional[bool] = None
+    mcq_questions: Optional[List[dict]] = None
+
+
+class InterviewJobOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    description: str
+    department: Optional[str] = None
+    team_id: Optional[int] = None
+    campaign_id: Optional[int] = None
+    status: str
+    base_questions: Optional[list] = None
+    scoring_weights: Optional[dict] = None
+    mcq_enabled: bool
+    mcq_questions: Optional[list] = None
+    created_by_id: int
+    updated_by_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class InterviewCandidateCreate(BaseModel):
+    job_id: int = Field(..., ge=1)
+    full_name: str = Field(..., min_length=1, max_length=255)
+    contact_email: str = Field(..., min_length=3, max_length=255)
+    phone_number: Optional[str] = Field(None, max_length=50)
+    national_id: Optional[str] = Field(None, min_length=4, max_length=32)
+
+
+class InterviewCandidateUpdate(BaseModel):
+    full_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    contact_email: Optional[str] = Field(None, min_length=3, max_length=255)
+    phone_number: Optional[str] = Field(None, max_length=50)
+    status: Optional[str] = None
+    national_id: Optional[str] = Field(None, min_length=4, max_length=32)
+    final_score: Optional[float] = None
+    global_percentile: Optional[float] = None
+
+
+class InterviewCandidateOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    job_id: int
+    full_name: str
+    contact_email: str
+    contact_email_normalized: str
+    phone_number: Optional[str] = None
+    phone_normalized: Optional[str] = None
+    national_id_last4: Optional[str] = None
+    status: str
+    final_score: Optional[float] = None
+    global_percentile: Optional[float] = None
+    applied_at: datetime
+    completed_at: Optional[datetime] = None
+    archived_at: Optional[datetime] = None
+    converted_employee_id: Optional[int] = None
+    created_by_id: Optional[int] = None
+    mcq_score: Optional[float] = None
+    mcq_total_questions: Optional[int] = None
+    mcq_percentage: Optional[float] = None
+    mcq_completed_at: Optional[datetime] = None
+
+
+class InterviewCandidateDocumentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    candidate_id: int
+    document_type: str
+    original_filename: str
+    content_type: Optional[str] = None
+    file_size_bytes: Optional[int] = None
+    extraction_status: str
+    extraction_error: Optional[str] = None
+    uploaded_at: datetime
+
+
+class InterviewSessionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    candidate_id: int
+    job_id: int
+    status: str
+    expires_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    question_count: int
+    created_at: datetime
+
+
+class InterviewPortalJobOut(BaseModel):
+    id: int
+    title: str
+    description: str
+    department: Optional[str] = None
+    mcq_enabled: bool
+
+
+class InterviewPortalRegistrationOut(BaseModel):
+    status: str = "success"
+    candidate_id: int
+    candidate_name: str
+    job_id: int
+    job_title: str
+    session_id: int
+    session_token: str
+    invite_url: Optional[str] = None
+    expires_at: datetime
+    question_count: int
+    duplicate_recent: bool = False
+    document_id: Optional[int] = None
+    document_extraction_status: Optional[str] = None
+
+
+class InterviewMcqQuestionOut(BaseModel):
+    id: int
+    category: str
+    question: str
+    options: List[str]
+    type: str
+    correct: Optional[int] = None
+    trait_tags: List[str] = Field(default_factory=list)
+
+
+class InterviewMcqPortalOut(BaseModel):
+    mcq_enabled: bool
+    mcq_completed: bool
+    question_count: int = 0
+    questions: List[InterviewMcqQuestionOut] = Field(default_factory=list)
+
+
+class InterviewMcqSubmitRequest(BaseModel):
+    answers: dict[str, int] = Field(default_factory=dict)
+
+
+class InterviewMcqSubmissionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    session_id: int
+    candidate_id: int
+    job_id: int
+    answers: dict
+    question_bank_snapshot: list
+    breakdown: Optional[dict] = None
+    score: float
+    total_questions: int
+    percentage: float
+    completed_at: datetime
+    created_at: datetime
+
+
+class InterviewMcqReviewQuestionOut(BaseModel):
+    question_id: int
+    question_text: str
+    options: List[str]
+    user_answer: Optional[int] = None
+    correct_answer: Optional[int] = None
+    type: Optional[str] = None
+    is_correct: Optional[bool] = None
+    trait_tags: List[str] = Field(default_factory=list)
+    chosen_trait: Optional[str] = None
+
+
+class InterviewMcqReviewOut(BaseModel):
+    status: str = "success"
+    candidate_id: int
+    candidate_name: str
+    score: float
+    total_questions: int
+    percentage: float
+    completed_at: Optional[datetime] = None
+    iq: List[InterviewMcqReviewQuestionOut] = Field(default_factory=list)
+    computer: List[InterviewMcqReviewQuestionOut] = Field(default_factory=list)
+    personality: List[InterviewMcqReviewQuestionOut] = Field(default_factory=list)
+    personality_breakdown: dict[str, int] = Field(default_factory=dict)
+
+
+class InterviewCandidateReviewAnswerOut(BaseModel):
+    answer_id: int
+    question_id: int
+    question_text: str
+    overall_score: Optional[float] = None
+    status: str
+    ai_summary: Optional[str] = None
+    transcribed_text: Optional[str] = None
+    submitted_at: Optional[datetime] = None
+    evaluated_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+
+
+class InterviewCandidateReviewMetricsOut(BaseModel):
+    evaluation_state: str
+    submitted_answers: int
+    evaluated_answers: int
+    average_answer_score: Optional[float] = None
+    strongest_answer_score: Optional[float] = None
+    weakest_answer_score: Optional[float] = None
+
+
+class InterviewCandidateReviewMcqSummaryOut(BaseModel):
+    completed: bool = False
+    score: Optional[float] = None
+    total_questions: Optional[int] = None
+    percentage: Optional[float] = None
+    completed_at: Optional[datetime] = None
+    objective_breakdown: dict[str, float] = Field(default_factory=dict)
+    personality_breakdown: dict[str, int] = Field(default_factory=dict)
+
+
+class InterviewCandidateRecommendationOut(BaseModel):
+    label: str
+    score: Optional[float] = None
+    rationale: str
+    strengths: List[str] = Field(default_factory=list)
+    concerns: List[str] = Field(default_factory=list)
+
+
+class InterviewCandidateReviewOut(BaseModel):
+    status: str = "success"
+    candidate: InterviewCandidateOut
+    interview_metrics: InterviewCandidateReviewMetricsOut
+    mcq_summary: InterviewCandidateReviewMcqSummaryOut
+    recommendation: InterviewCandidateRecommendationOut
+    answers: List[InterviewCandidateReviewAnswerOut] = Field(default_factory=list)
+
+
+class InterviewQuestionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    job_id: int
+    session_id: Optional[int] = None
+    candidate_id: Optional[int] = None
+    question_text: str
+    expected_skills_tags: Optional[dict | list] = None
+    source: str
+    display_order: int
+    created_at: datetime
+
+
+class InterviewAnswerOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    session_id: int
+    candidate_id: int
+    question_id: int
+    transcribed_text: Optional[str] = None
+    relevance_score: Optional[float] = None
+    fluency_score: Optional[float] = None
+    grammar_score: Optional[float] = None
+    overall_score: Optional[float] = None
+    ai_summary: Optional[str] = None
+    status: str
+    started_at: Optional[datetime] = None
+    submitted_at: Optional[datetime] = None
+    evaluated_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+
+
+class InterviewWorkflowEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    candidate_id: int
+    actor_id: Optional[int] = None
+    event_type: str
+    from_status: Optional[str] = None
+    to_status: Optional[str] = None
+    note: Optional[str] = None
+    event_payload: Optional[dict] = None
+    created_at: datetime
+
+
+class CandidateTimelineEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    candidate_id: int
+    actor_id: Optional[int] = None
+    actor_name: Optional[str] = None
+    event_type: str
+    from_status: Optional[str] = None
+    to_status: Optional[str] = None
+    note: Optional[str] = None
+    event_payload: Optional[dict] = None
+    created_at: datetime
+
+
+class InterviewCandidateInviteRequest(BaseModel):
+    expires_in_hours: int = Field(default=24, ge=1, le=168)
+    questions: Optional[List[str]] = None
+
+
+class InterviewCandidateInviteOut(BaseModel):
+    candidate_id: int
+    session_id: int
+    session_token: str
+    invite_url: Optional[str] = None
+    expires_at: datetime
+    question_count: int
+
+
+class InterviewCandidateDecisionUpdate(BaseModel):
+    note: Optional[str] = None
+    send_email: Optional[bool] = False
+
+
+class InterviewCandidateIdentitySummaryOut(BaseModel):
+    candidate_id: int
+    full_name: str
+    job_id: int
+    job_title: Optional[str] = None
+    department: Optional[str] = None
+    status: str
+    phone_last4: Optional[str] = None
+    national_id_last4: Optional[str] = None
+    contact_email_masked: Optional[str] = None
+    converted_employee_id: Optional[int] = None
+
+
+class InterviewEmployeeMatchOut(BaseModel):
+    employee_id: int
+    employee_code: str
+    employee_email: str
+    role: str
+    status: str
+
+
+class InterviewCandidateOnboardingReadinessOut(BaseModel):
+    candidate_id: int
+    status: str
+    is_ready: bool
+    blocking_reasons: List[str] = Field(default_factory=list)
+    blocking_categories: List[str] = Field(default_factory=list)
+    suggested_employee_code: Optional[str] = None
+    suggested_company_email: Optional[str] = None
+    candidate_identity_summary: InterviewCandidateIdentitySummaryOut
+    existing_employee_match: Optional[InterviewEmployeeMatchOut] = None
+
+
+class InterviewCandidateBulkActionRequest(BaseModel):
+    candidate_ids: List[int] = Field(..., min_length=1, max_length=200)
+    note: Optional[str] = None
+
+
+class InterviewCandidateBulkActionOut(BaseModel):
+    requested: int
+    updated: int
+    skipped: int
+    candidate_ids: List[int] = Field(default_factory=list)
+
+
+class InterviewCandidateConvertRequest(BaseModel):
+    employee_code: str = Field(..., min_length=1, max_length=50)
+    role: str = "AGENT"
+    department: Optional[str] = Field(None, max_length=255)
+    otp_email: Optional[str] = Field(None, max_length=255)
+    password: Optional[str] = Field(None, min_length=6)
+    phone_number: Optional[str] = Field(None, max_length=50)
+
+
+class InterviewPortalSessionOut(BaseModel):
+    candidate_id: int
+    candidate_name: str
+    job_id: int
+    job_title: str
+    session_id: int
+    status: str
+    expires_at: datetime
+    question_count: int
+    mcq_enabled: bool = False
+    mcq_completed: bool = False
+    mcq_question_count: int = 0
+    question_time_limit_seconds: int = 180
+
+
+class InterviewAnswerSubmitOut(BaseModel):
+    answer_id: int
+    session_id: int
+    question_id: int
+    status: str
+    transcribed_text: Optional[str] = None
+
+
+class InterviewQuestionStartOut(BaseModel):
+    answer_id: int
+    session_id: int
+    question_id: int
+    status: str
+    started_at: datetime
+    time_limit_seconds: int
+
+
+class InterviewPortalAnswerHistoryOut(BaseModel):
+    answer_id: int
+    question_id: int
+    question_text: str
+    status: str
+    overall_score: Optional[float] = None
+    ai_summary: Optional[str] = None
+    submitted_at: Optional[datetime] = None
+    evaluated_at: Optional[datetime] = None
+
+
+class InterviewPortalMcqResultOut(BaseModel):
+    completed: bool = False
+    score: Optional[float] = None
+    total_questions: Optional[int] = None
+    percentage: Optional[float] = None
+    completed_at: Optional[datetime] = None
+    objective_breakdown: dict[str, float] = Field(default_factory=dict)
+    personality_breakdown: dict[str, int] = Field(default_factory=dict)
+
+
+class InterviewPortalDashboardOut(BaseModel):
+    candidate_id: int
+    candidate_name: str
+    job_id: int
+    job_title: str
+    session_id: int
+    session_status: str
+    completed_at: Optional[datetime] = None
+    question_count: int
+    submitted_answers: int
+    evaluated_answers: int
+    average_score: Optional[float] = None
+    answers: List[InterviewPortalAnswerHistoryOut] = Field(default_factory=list)
+    mcq_result: InterviewPortalMcqResultOut
+
+
+class InterviewCandidateConversionOut(BaseModel):
+    candidate_id: int
+    employee_id: int
+    employee_code: str
+    employee_email: str
+    role: str
+
+
+class InterviewRetentionPurgeRequest(BaseModel):
+    older_than_days: int = Field(default=90, ge=1, le=3650)
+    dry_run: bool = True
+
+
+class InterviewRetentionPurgeOut(BaseModel):
+    archived_candidates_matched: int
+    candidates_deleted: int
+    document_rows_deleted: int
+    answer_audio_files_deleted: int
+    document_files_deleted: int
+    dry_run: bool
 
 class CampaignCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
@@ -595,6 +1107,14 @@ class AgentViolationOut(BaseModel):
     penalty_tier: str
     score_deduction: float
     hr_flagged: bool
+    qa_approved: bool
+    qa_approved_by_id: Optional[int]
+    qa_approved_at: Optional[datetime]
+    qa_approval_note: Optional[str]
+    hr_approved: bool
+    hr_approved_by_id: Optional[int]
+    hr_approved_at: Optional[datetime]
+    hr_approval_note: Optional[str]
     auto_fail: bool
     evidence: Optional[str]
     timestamp_in_call: Optional[str]
@@ -625,6 +1145,8 @@ class PendingViolationOut(BaseModel):
     violation_id: int
     employee_id: int
     employee_name: str
+    team_id: Optional[int]
+    team_name: Optional[str]
     call_id: int
     violation_type: str
     severity: str
@@ -632,6 +1154,9 @@ class PendingViolationOut(BaseModel):
     penalty_tier: str
     evidence: Optional[str]
     created_at: datetime
+
+class ViolationApprovalUpdate(BaseModel):
+    note: Optional[str] = None
 
 class ViolationStats(BaseModel):
     total_violations_today: int
@@ -805,6 +1330,9 @@ class TeamManagerAttendanceReportOut(BaseModel):
 
 class TeamManagerKpisOut(BaseModel):
     month: str
+    period_start: Optional[datetime] = None
+    period_end: Optional[datetime] = None
+    period_label: Optional[str] = None
     total_sales: int
     total_revenue: float
     average_qa_score: float

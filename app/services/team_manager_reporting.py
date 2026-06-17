@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from fastapi import HTTPException
@@ -54,6 +54,45 @@ def _team_ids_for_user(db: Session, current_user: Employee) -> list[int]:
     if current_user.role == UserRole.ADMIN:
         return [row[0] for row in db.query(Team.id).filter(Team.is_active == True).order_by(Team.id.asc()).all()]
     return get_managed_team_ids(db, current_user.id)
+
+
+def _month_window(month: str) -> tuple[datetime, datetime]:
+    try:
+        month_start = datetime.strptime(month, "%Y-%m").replace(tzinfo=timezone.utc)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid month format. Expected YYYY-MM.") from exc
+    if month_start.month == 12:
+        next_month = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month = month_start.replace(month=month_start.month + 1)
+    return month_start, next_month - timedelta(microseconds=1)
+
+
+def _resolve_reporting_period(
+    *,
+    month: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+) -> tuple[str, Optional[datetime], Optional[datetime], Optional[str]]:
+    if start_date is not None or end_date is not None:
+        month_label = month or (
+            start_date.strftime("%Y-%m")
+            if start_date and end_date and start_date.strftime("%Y-%m") == end_date.strftime("%Y-%m")
+            else "custom"
+        )
+        if start_date and end_date:
+            label = f"{start_date.date().isoformat()} to {end_date.date().isoformat()}"
+        elif start_date:
+            label = f"From {start_date.date().isoformat()}"
+        elif end_date:
+            label = f"Until {end_date.date().isoformat()}"
+        else:
+            label = None
+        return month_label, start_date, end_date, label
+
+    month_value = month or datetime.now(timezone.utc).strftime("%Y-%m")
+    period_start, period_end = _month_window(month_value)
+    return month_value, period_start, period_end, month_value
 
 
 def _assignment_query(db: Session, team_ids: list[int]):
@@ -164,20 +203,20 @@ def get_team_manager_dashboard(db: Session, current_user: Employee, start_date: 
     )
 
 
-def get_team_manager_teams(db: Session, current_user: Employee, skip: int = 0, limit: int = 50) -> list[TeamManagerTeamRowOut]:
-    return _build_team_rows(db, _team_ids_for_user(db, current_user), skip=skip, limit=limit)
+def get_team_manager_teams(db: Session, current_user: Employee, start_date: Optional[datetime] = None, end_date: Optional[datetime] = None, skip: int = 0, limit: int = 50) -> list[TeamManagerTeamRowOut]:
+    return _build_team_rows(db, _team_ids_for_user(db, current_user), start_date, end_date, skip=skip, limit=limit)
 
 
-def get_team_manager_team_detail(db: Session, current_user: Employee, team_id: int) -> TeamManagerTeamRowOut:
+def get_team_manager_team_detail(db: Session, current_user: Employee, team_id: int, start_date: Optional[datetime] = None, end_date: Optional[datetime] = None) -> TeamManagerTeamRowOut:
     if current_user.role != UserRole.ADMIN and not is_team_in_manager_scope(db, current_user.id, team_id):
         raise HTTPException(status_code=403, detail="Access denied.")
-    rows = _build_team_rows(db, [team_id], skip=0, limit=1)
+    rows = _build_team_rows(db, [team_id], start_date, end_date, skip=0, limit=1)
     if not rows:
         raise HTTPException(status_code=404, detail="Team not found.")
     return rows[0]
 
 
-def get_team_manager_agents(db: Session, current_user: Employee, team_id: Optional[int] = None, skip: int = 0, limit: int = 50) -> list[TeamManagerAgentRowOut]:
+def get_team_manager_agents(db: Session, current_user: Employee, team_id: Optional[int] = None, start_date: Optional[datetime] = None, end_date: Optional[datetime] = None, skip: int = 0, limit: int = 50) -> list[TeamManagerAgentRowOut]:
     team_ids = _team_ids_for_user(db, current_user)
     if team_id is not None:
         if current_user.role != UserRole.ADMIN and team_id not in team_ids:
@@ -199,7 +238,7 @@ def get_team_manager_agents(db: Session, current_user: Employee, team_id: Option
     for assignment in assignments:
         agent = assignment.employee
         team = assignment.team
-        stats = _call_stats_for_agents(db, [agent.id])
+        stats = _call_stats_for_agents(db, [agent.id], start_date, end_date)
         total_calls = int(stats.total_calls or 0) if stats else 0
         sales = int(stats.sales or 0) if stats else 0
         rows.append(
@@ -215,14 +254,14 @@ def get_team_manager_agents(db: Session, current_user: Employee, team_id: Option
                 revenue=float(stats.revenue or 0.0) if stats else 0.0,
                 conversion_rate=round((sales / total_calls) * 100.0, 2) if total_calls else 0.0,
                 qa_score=round(float(stats.avg_qa_score or 0.0), 2) if stats and total_calls else None,
-                attendance_rate=_attendance_rate_for_agents(db, [agent.id]),
+                attendance_rate=_attendance_rate_for_agents(db, [agent.id], start_date, end_date),
                 status=agent.status or "active",
             )
         )
     return rows
 
 
-def get_team_manager_agent_detail(db: Session, current_user: Employee, agent_id: int) -> TeamManagerAgentDetailOut:
+def get_team_manager_agent_detail(db: Session, current_user: Employee, agent_id: int, start_date: Optional[datetime] = None, end_date: Optional[datetime] = None) -> TeamManagerAgentDetailOut:
     if current_user.role != UserRole.ADMIN and not is_agent_in_manager_scope(db, current_user.id, agent_id):
         raise HTTPException(status_code=403, detail="Access denied.")
     agent = db.query(Employee).filter(Employee.id == agent_id).first()
@@ -234,7 +273,7 @@ def get_team_manager_agent_detail(db: Session, current_user: Employee, agent_id:
         .first()
     )
     team = assignment.team if assignment else None
-    stats = _call_stats_for_agents(db, [agent.id])
+    stats = _call_stats_for_agents(db, [agent.id], start_date, end_date)
     total_calls = int(stats.total_calls or 0) if stats else 0
     sales = int(stats.sales or 0) if stats else 0
     return TeamManagerAgentDetailOut(
@@ -250,7 +289,7 @@ def get_team_manager_agent_detail(db: Session, current_user: Employee, agent_id:
         revenue=float(stats.revenue or 0.0) if stats else 0.0,
         conversion_rate=round((sales / total_calls) * 100.0, 2) if total_calls else 0.0,
         qa_score=round(float(stats.avg_qa_score or 0.0), 2) if stats and total_calls else None,
-        attendance_rate=_attendance_rate_for_agents(db, [agent.id]),
+        attendance_rate=_attendance_rate_for_agents(db, [agent.id], start_date, end_date),
         status=agent.status or "active",
         created_at=agent.created_at,
     )
@@ -298,12 +337,18 @@ def get_team_manager_attendance_report(db: Session, current_user: Employee, star
     return TeamManagerAttendanceReportOut(records=rows, attendance_rate=_attendance_rate_for_agents(db, agent_ids, start_date, end_date))
 
 
-def get_team_manager_kpis(db: Session, current_user: Employee, month: Optional[str] = None) -> TeamManagerKpisOut:
-    if not month:
-        month = datetime.now(timezone.utc).strftime("%Y-%m")
-    dashboard = get_team_manager_dashboard(db, current_user)
-    return TeamManagerKpisOut(
+def get_team_manager_kpis(db: Session, current_user: Employee, month: Optional[str] = None, start_date: Optional[datetime] = None, end_date: Optional[datetime] = None) -> TeamManagerKpisOut:
+    month_value, period_start, period_end, period_label = _resolve_reporting_period(
         month=month,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    dashboard = get_team_manager_dashboard(db, current_user, period_start, period_end)
+    return TeamManagerKpisOut(
+        month=month_value,
+        period_start=period_start,
+        period_end=period_end,
+        period_label=period_label,
         total_sales=dashboard.total_sales,
         total_revenue=dashboard.total_revenue,
         average_qa_score=dashboard.average_qa_score,

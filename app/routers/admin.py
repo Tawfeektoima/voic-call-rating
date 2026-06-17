@@ -6,7 +6,7 @@ from typing import List, Optional
 from app.config import get_settings
 from app.database import get_db
 from app.models import Employee, Campaign, Call, CallStatus, SystemLog, UserRole, EmployeeStatus, AuditEvent, Team, AgentTransferRequest, EmployeeTeamAssignment, KpiThresholdConfig
-from app.schemas import EmployeeCreate, EmployeeOut, EmployeeUpdate, EmployeeStatusUpdate, CampaignCreate, CampaignOut, SystemMetrics, SystemLogOut, SystemMetricPoint, AlertCreate, AuditEventOut, KpiThresholdCreate, KpiThresholdUpdate, KpiThresholdOut, AgentTransferRequestOut, RoleDefinitionOut, RolePermissionCatalogOut, RolePermissionUpdate
+from app.schemas import EmployeeCreate, EmployeeOut, EmployeeUpdate, EmployeeStatusUpdate, TeamLeaderAssignmentUpdate, QaScopeAssignmentUpdate, TeamDirectoryOut, CampaignCreate, CampaignOut, SystemMetrics, SystemLogOut, SystemMetricPoint, AlertCreate, AuditEventOut, KpiThresholdCreate, KpiThresholdUpdate, KpiThresholdOut, AgentTransferRequestOut, RoleDefinitionOut, RolePermissionCatalogOut, RolePermissionUpdate
 from app.routers.auth import get_current_user
 from app.services.audit import log_audit_event
 from app.services.kpi_catalog import get_kpi_catalog, get_kpi_definition, is_valid_kpi_key
@@ -76,6 +76,48 @@ def _audit_employee_update(
         reason=reason,
         success=True,
     )
+
+
+def _serialize_team_directory(team: Team) -> TeamDirectoryOut:
+    return TeamDirectoryOut(
+        id=team.id,
+        name=team.name,
+        campaign_id=team.campaign_id,
+        campaign_name=team.campaign.name if team.campaign else None,
+        manager_id=team.manager_id,
+        manager_name=team.manager.name if team.manager else None,
+        leader_id=team.leader_id,
+        leader_name=team.leader.name if team.leader else None,
+        is_active=bool(team.is_active),
+    )
+
+
+def _validate_qa_scope_assignment(db: Session, employee: Employee, team_id: Optional[int], campaign_id: Optional[int]) -> tuple[Optional[Team], Optional[Campaign]]:
+    role_value = normalize_role_value(employee.role)
+    if role_value != UserRole.QA:
+        raise HTTPException(status_code=400, detail="QA scope can only be assigned to QA employees.")
+
+    if team_id is None and campaign_id is not None:
+        raise HTTPException(status_code=400, detail="Campaign scope cannot be assigned without a QA team scope.")
+
+    team = None
+    if team_id is not None:
+        team = db.query(Team).filter(Team.id == team_id).first()
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found.")
+        if not team.is_active:
+            raise HTTPException(status_code=400, detail="QA scope team must be active.")
+
+    campaign = None
+    if campaign_id is not None:
+        campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+        if campaign is None:
+            raise HTTPException(status_code=404, detail="Campaign not found.")
+
+    if team is not None and campaign is not None and team.campaign_id is not None and team.campaign_id != campaign.id:
+        raise HTTPException(status_code=400, detail="Selected campaign must match the assigned team's campaign.")
+
+    return team, campaign
 
 
 def _require_admin(current_user: Employee) -> None:
@@ -227,6 +269,21 @@ def get_employees(
     return employees
 
 
+@router.get("/teams", response_model=List[TeamDirectoryOut])
+def get_teams(
+    active_only: bool = Query(True),
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
+):
+    _require_employee_view_access(current_user)
+
+    query = db.query(Team).order_by(Team.name.asc())
+    if active_only:
+        query = query.filter(Team.is_active == True)
+    teams = query.all()
+    return [_serialize_team_directory(team) for team in teams]
+
+
 @router.put("/employees/{employee_id}", response_model=EmployeeOut)
 def update_employee(
     employee_id: int,
@@ -250,6 +307,38 @@ def update_employee(
         if employee.role != new_role:
             old_role = employee.role
             employee.role = new_role
+
+            if old_role == UserRole.TEAM_LEADER and new_role != UserRole.TEAM_LEADER:
+                led_teams = db.query(Team).filter(Team.leader_id == employee.id).all()
+                for team in led_teams:
+                    team.leader_id = None
+                    log_audit_event(
+                        db=db,
+                        action="TEAM_LEADER_ASSIGNMENT_CHANGE",
+                        actor_id=current_user.id,
+                        actor_email=current_user.email,
+                        target=f"Team {team.name} (ID: {team.id})",
+                        before_state=f"leader_id={employee.id}; leader_email={employee.email}",
+                        after_state="leader_id=None",
+                        reason="Leader role removed from employee",
+                        success=True,
+                    )
+
+            if old_role == UserRole.QA and new_role != UserRole.QA and (employee.qa_scope_team_id is not None or employee.qa_scope_campaign_id is not None):
+                before_scope = f"team_id={employee.qa_scope_team_id}; campaign_id={employee.qa_scope_campaign_id}"
+                employee.qa_scope_team_id = None
+                employee.qa_scope_campaign_id = None
+                log_audit_event(
+                    db=db,
+                    action="QA_SCOPE_ASSIGNMENT_CHANGE",
+                    actor_id=current_user.id,
+                    actor_email=current_user.email,
+                    target=f"Employee {employee.email} (ID: {employee.id})",
+                    before_state=before_scope,
+                    after_state="team_id=None; campaign_id=None",
+                    reason="QA role removed from employee",
+                    success=True,
+                )
             
             # Log role change in DB SystemLog
             log_msg = f"Admin {current_user.email} changed role of employee {employee.email} from {old_role} to {new_role}"
@@ -300,6 +389,120 @@ def update_employee(
     db.commit()
     db.refresh(employee)
     return employee
+
+
+@router.put("/employees/{employee_id}/qa-scope", response_model=EmployeeOut)
+def update_employee_qa_scope(
+    employee_id: int,
+    payload: QaScopeAssignmentUpdate,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    _require_employee_management_access(current_user)
+
+    employee = db.query(Employee).filter(Employee.id == employee_id).first()
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found.")
+
+    team, campaign = _validate_qa_scope_assignment(db, employee, payload.team_id, payload.campaign_id)
+    before_state = f"team_id={employee.qa_scope_team_id}; campaign_id={employee.qa_scope_campaign_id}"
+
+    employee.qa_scope_team_id = team.id if team else None
+    employee.qa_scope_campaign_id = campaign.id if campaign else None
+    db.commit()
+    db.refresh(employee)
+
+    log_audit_event(
+        db=db,
+        action="QA_SCOPE_ASSIGNMENT_CHANGE",
+        actor_id=current_user.id,
+        actor_email=current_user.email,
+        target=f"Employee {employee.email} (ID: {employee.id})",
+        before_state=before_state,
+        after_state=f"team_id={employee.qa_scope_team_id}; campaign_id={employee.qa_scope_campaign_id}",
+        reason="HR/admin QA scope assignment update",
+        success=True,
+    )
+
+    db.refresh(employee)
+    return employee
+
+
+@router.put("/teams/{team_id}/leader", response_model=TeamDirectoryOut)
+def assign_team_leader(
+    team_id: int,
+    payload: TeamLeaderAssignmentUpdate,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
+):
+    _require_employee_management_access(current_user)
+
+    team = db.query(Team).filter(Team.id == team_id).first()
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found.")
+
+    requested_leader: Optional[Employee] = None
+    if payload.leader_id is not None:
+        requested_leader = db.query(Employee).filter(Employee.id == payload.leader_id).first()
+        if requested_leader is None:
+            raise HTTPException(status_code=404, detail="Team leader not found.")
+        if requested_leader.role != UserRole.TEAM_LEADER:
+            raise HTTPException(status_code=400, detail="Selected employee must have the TEAM_LEADER role.")
+        if (requested_leader.status or "").lower() != EmployeeStatus.ACTIVE.value:
+            raise HTTPException(status_code=400, detail="Selected team leader must have an active account.")
+
+    old_leader_id = team.leader_id
+    old_leader_email = team.leader.email if team.leader else None
+
+    displaced_teams: list[str] = []
+    if requested_leader is not None:
+        other_teams = (
+            db.query(Team)
+            .filter(Team.leader_id == requested_leader.id, Team.id != team.id)
+            .all()
+        )
+        for other_team in other_teams:
+            other_team.leader_id = None
+            displaced_teams.append(f"{other_team.name}#{other_team.id}")
+            log_audit_event(
+                db=db,
+                action="TEAM_LEADER_ASSIGNMENT_CHANGE",
+                actor_id=current_user.id,
+                actor_email=current_user.email,
+                target=f"Team {other_team.name} (ID: {other_team.id})",
+                before_state=f"leader_id={requested_leader.id}; leader_email={requested_leader.email}",
+                after_state="leader_id=None",
+                reason=f"Leader reassigned to team {team.name}",
+                success=True,
+            )
+
+    if old_leader_id == payload.leader_id and not displaced_teams:
+        return _serialize_team_directory(team)
+
+    team.leader_id = payload.leader_id
+    db.commit()
+    db.refresh(team)
+
+    after_state = "leader_id=None"
+    if requested_leader is not None:
+        after_state = f"leader_id={requested_leader.id}; leader_email={requested_leader.email}"
+        if displaced_teams:
+            after_state = f"{after_state}; cleared_previous_teams={','.join(displaced_teams)}"
+
+    log_audit_event(
+        db=db,
+        action="TEAM_LEADER_ASSIGNMENT_CHANGE",
+        actor_id=current_user.id,
+        actor_email=current_user.email,
+        target=f"Team {team.name} (ID: {team.id})",
+        before_state=f"leader_id={old_leader_id}; leader_email={old_leader_email}" if old_leader_id else "leader_id=None",
+        after_state=after_state,
+        reason="HR/admin team leader assignment update",
+        success=True,
+    )
+
+    db.refresh(team)
+    return _serialize_team_directory(team)
 
 
 @router.put("/employees/{employee_id}/status", response_model=EmployeeOut)

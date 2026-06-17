@@ -4,6 +4,7 @@ import { BadgeCheck, ChevronRight, IdCard, KeyRound, Layout, Loader2, Lock, Mail
 import { toast } from 'sonner';
 import axios from 'axios';
 import { useApp } from '../context/AppContext';
+import { getApiBaseUrl } from '../lib/network';
 import { UserRole } from '../lib/types';
 import { getPermissionsForRole } from '../lib/roles';
 
@@ -44,7 +45,7 @@ export function Login() {
     setLoading(true);
 
     try {
-      const response = await axios.post(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/api/auth/login`, formData);
+      const response = await axios.post(`${getApiBaseUrl()}/api/auth/login`, formData);
 
       if (response.data.otp_required) {
         setOtpChallenge({
@@ -92,7 +93,7 @@ export function Login() {
     setLoading(true);
 
     try {
-      const response = await axios.post(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/api/auth/login/verify-otp`, {
+      const response = await axios.post(`${getApiBaseUrl()}/api/auth/login/verify-otp`, {
         challenge_id: otpChallenge.challenge_id,
         otp_code: otpCode
       });
@@ -111,7 +112,7 @@ export function Login() {
     setLoading(true);
 
     try {
-      const response = await axios.post(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/api/auth/password-reset/request`, {
+      const response = await axios.post(`${getApiBaseUrl()}/api/auth/password-reset/request`, {
         email: resetData.email,
         national_id: resetData.national_id
       });
@@ -141,7 +142,7 @@ export function Login() {
     setLoading(true);
 
     try {
-      await axios.post(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/api/auth/password-reset/confirm`, {
+      await axios.post(`${getApiBaseUrl()}/api/auth/password-reset/confirm`, {
         challenge_id: resetChallenge.challenge_id,
         otp_code: otpCode,
         new_password: resetData.new_password

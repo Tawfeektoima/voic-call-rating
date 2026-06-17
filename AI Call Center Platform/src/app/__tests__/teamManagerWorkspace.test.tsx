@@ -178,20 +178,24 @@ describe('Team Manager workspace', () => {
 
     expect(html).toContain('Manager Workspace');
     expect(html).toContain('Workflow Notes');
+    expect(html).not.toContain('Agent Profiles');
   });
 
   it('renders team manager dashboard, reports, agents, and transfer requests', async () => {
     const client = createClient();
-    const currentMonth = new Date().toISOString().slice(0, 7);
+    const today = new Date();
+    const rangeStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+    const rangeEnd = today.toISOString().slice(0, 10);
+    const startParam = `${rangeStart}T00:00:00`;
+    const endParam = `${rangeEnd}T23:59:59.999999`;
     await Promise.all([
-      client.prefetchQuery({ queryKey: ['team-manager-dashboard'], queryFn: () => mockGetTeamManagerDashboard() }),
-      client.prefetchQuery({ queryKey: ['team-manager-teams'], queryFn: () => mockGetTeamManagerTeams() }),
-      client.prefetchQuery({ queryKey: ['team-manager-agents', 'all'], queryFn: () => mockGetTeamManagerAgents() }),
-      client.prefetchQuery({ queryKey: ['team-manager-report-sales'], queryFn: () => mockGetTeamManagerSalesReport() }),
-      client.prefetchQuery({ queryKey: ['team-manager-report-revenue'], queryFn: () => mockGetTeamManagerRevenueReport() }),
-      client.prefetchQuery({ queryKey: ['team-manager-report-conversion'], queryFn: () => mockGetTeamManagerConversionReport() }),
-      client.prefetchQuery({ queryKey: ['team-manager-report-attendance'], queryFn: () => mockGetTeamManagerAttendanceReport() }),
-      client.prefetchQuery({ queryKey: ['team-manager-kpis', currentMonth], queryFn: () => mockGetTeamManagerKpis() }),
+      client.prefetchQuery({ queryKey: ['team-manager-dashboard', startParam, endParam], queryFn: () => mockGetTeamManagerDashboard() }),
+      client.prefetchQuery({ queryKey: ['team-manager-agents', 'all', startParam, endParam], queryFn: () => mockGetTeamManagerAgents() }),
+      client.prefetchQuery({ queryKey: ['team-manager-report-sales', startParam, endParam], queryFn: () => mockGetTeamManagerSalesReport() }),
+      client.prefetchQuery({ queryKey: ['team-manager-report-revenue', startParam, endParam], queryFn: () => mockGetTeamManagerRevenueReport() }),
+      client.prefetchQuery({ queryKey: ['team-manager-report-conversion', startParam, endParam], queryFn: () => mockGetTeamManagerConversionReport() }),
+      client.prefetchQuery({ queryKey: ['team-manager-report-attendance', startParam, endParam], queryFn: () => mockGetTeamManagerAttendanceReport() }),
+      client.prefetchQuery({ queryKey: ['team-manager-kpis', startParam, endParam], queryFn: () => mockGetTeamManagerKpis() }),
       client.prefetchQuery({ queryKey: ['team-manager-transfer-requests'], queryFn: () => mockGetTeamManagerTransferRequests() }),
     ]);
 

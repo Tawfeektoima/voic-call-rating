@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 import uuid
 from app.database import get_db
-from app.models import GoldenPairCandidate, CandidateStatus, Employee
+from app.models import GoldenPairCandidate, CandidateStatus, Employee, Call, UserRole
 from app.routers.auth import get_current_user
 from app.workers.rag_worker import collection, _get_model
 from app.permissions import Permission, require_permission
+from app.services.team_scope import is_call_in_qa_scope
 
 router = APIRouter(prefix="/api/review", tags=["HITL Review"])
 
@@ -24,6 +25,8 @@ def get_review_queue(db: Session = Depends(get_db), current_user: Employee = Dep
                    .filter(GoldenPairCandidate.status == CandidateStatus.PENDING)\
                    .order_by(GoldenPairCandidate.score.desc())\
                    .all()
+    if current_user.role == UserRole.QA:
+        candidates = [c for c in candidates if is_call_in_qa_scope(db, current_user.id, c.call_id)]
     
     return [
         {
@@ -48,6 +51,8 @@ def approve_candidate(candidate_id: int, db: Session = Depends(get_db), current_
     candidate = db.query(GoldenPairCandidate).filter(GoldenPairCandidate.id == candidate_id).first()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
+    if current_user.role == UserRole.QA and not is_call_in_qa_scope(db, current_user.id, candidate.call_id):
+        raise HTTPException(status_code=403, detail="You do not have permission to review this candidate.")
     
     if candidate.status != CandidateStatus.PENDING:
         raise HTTPException(status_code=400, detail="Candidate already processed")
@@ -87,6 +92,8 @@ def reject_candidate(candidate_id: int, db: Session = Depends(get_db), current_u
     candidate = db.query(GoldenPairCandidate).filter(GoldenPairCandidate.id == candidate_id).first()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
+    if current_user.role == UserRole.QA and not is_call_in_qa_scope(db, current_user.id, candidate.call_id):
+        raise HTTPException(status_code=403, detail="You do not have permission to review this candidate.")
         
     candidate.status = CandidateStatus.REJECTED
     db.commit()

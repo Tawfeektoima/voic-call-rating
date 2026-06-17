@@ -42,10 +42,20 @@ alembic upgrade head
 Use the provided batch file:
 `run_platform.bat`
 
+For external interview testing through Cloudflare Tunnel:
+`start_public_tunnel.bat`
+
 Or start services manually:
 1. **Backend:** `uvicorn app.main:app --reload`
 2. **Worker:** `celery -A app.worker.celery_app worker --loglevel=info -P solo`
 3. **Frontend:** `cd "AI Call Center Platform" && npm run dev`
+
+### Public Interview Tunnel
+
+- For external interview links, expose the frontend through a public host such as Cloudflare Tunnel and set `PUBLIC_BASE_URL` to that origin.
+- The frontend now serves the public candidate route at `/interview-portal`, and Vite proxies `/api` and `/ws` back to the local backend during development.
+- If you want invite creation to fail whenever no public host is configured, set `REQUIRE_PUBLIC_BASE_URL_FOR_INTERVIEWS=true`.
+- `start_public_tunnel.bat` starts backend, worker, frontend, and `cloudflared.exe` in separate windows. After Cloudflare shows the public URL, place it in `PUBLIC_BASE_URL` and restart the backend so generated invite links use that public origin.
 
 ## Production Deployment
 

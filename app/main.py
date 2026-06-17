@@ -31,8 +31,9 @@ if os.path.exists(scripts_path) and scripts_path not in os.environ["PATH"]:
 load_dotenv()
 
 from app.database import engine, Base, SessionLocal
-from app.routers import audio, analytics, admin, auth, system, export, hr, websocket_router, live, review, notes
+from app.routers import audio, analytics, admin, auth, system, export, hr, websocket_router, live, review, notes, interviews, interview_portal
 from app.recovery import recover_stuck_tasks
+from app.services.public_links import get_additional_allowed_origins, probe_public_base_url, validate_public_url_settings
 from app.services.websocket import manager
 from app.config import get_settings
 
@@ -116,16 +117,32 @@ async def configure_redis_limits():
 async def lifespan(app: FastAPI):
     # Startup checks (TASK-C05)
     settings = get_settings()
+    public_url_errors = validate_public_url_settings(settings)
+    if public_url_errors:
+        raise RuntimeError("Public URL configuration error: " + " | ".join(public_url_errors))
     if settings.ENVIRONMENT.lower() != "production":
         Base.metadata.create_all(bind=engine)
-        db = SessionLocal()
-        try:
-            from app.services.role_permissions import seed_role_permissions
+    db = SessionLocal()
+    try:
+        from app.services.interview_security_backfill import backfill_interview_document_security
 
+        if settings.ENVIRONMENT.lower() != "production":
+            from app.services.role_permissions import backfill_interview_role_permissions, seed_role_permissions
             seed_role_permissions(db)
-            db.commit()
-        finally:
-            db.close()
+            backfill_interview_role_permissions(db)
+        else:
+            from app.services.role_permissions import backfill_interview_role_permissions
+            backfill_interview_role_permissions(db)
+        security_backfill = backfill_interview_document_security(db)
+        db.commit()
+        if security_backfill.encrypted_files or security_backfill.encrypted_text_rows:
+            print(
+                "[Interview Security] Backfilled "
+                f"{security_backfill.encrypted_files} document files and "
+                f"{security_backfill.encrypted_text_rows} extracted-text rows."
+            )
+    finally:
+        db.close()
     if settings.DATABASE_URL.startswith("sqlite"):
         print("=" * 60)
         print("⚠️  WARNING: Running with SQLite database.")
@@ -139,6 +156,12 @@ async def lifespan(app: FastAPI):
         recover_stuck_tasks()
     else:
         print("ℹ️  Startup recovery DISABLED — skipping stuck task recovery.")
+    if settings.ENABLE_PUBLIC_BASE_URL_HEALTHCHECK and settings.PUBLIC_BASE_URL.strip():
+        is_healthy, detail = probe_public_base_url(settings.PUBLIC_BASE_URL)
+        if is_healthy:
+            print(f"[Public URL] Reachable: {detail}")
+        else:
+            print(f"[Public URL Warning] {settings.PUBLIC_BASE_URL} is not reachable yet: {detail}")
     await configure_redis_limits() # Phase 8: Redis optimization
     listener_task = asyncio.create_task(redis_listener())
     
@@ -168,11 +191,12 @@ Instrumentator().instrument(app).expose(app)
 # CORS configuration — allow React frontend origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        os.getenv("FRONTEND_URL", "http://localhost:5173"),
+    allow_origins=list(dict.fromkeys([
+        get_settings().FRONTEND_URL,
         "http://localhost:8000",
         "http://localhost:3000",
-    ],
+        *get_additional_allowed_origins(get_settings()),
+    ])),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -186,6 +210,8 @@ app.include_router(analytics.router)
 app.include_router(system.router)
 app.include_router(export.router)
 app.include_router(hr.router)
+app.include_router(interviews.router)
+app.include_router(interview_portal.router)
 app.include_router(notes.router)
 app.include_router(websocket_router.router)
 app.include_router(live.router)

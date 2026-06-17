@@ -33,6 +33,18 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "uploads"
     MAX_FILE_SIZE_MB: int = 100
     ALLOWED_EXTENSIONS: str = ".wav,.mp3,.m4a,.ogg,.flac,.webm"
+    FRONTEND_URL: str = "http://localhost:5173"
+    INTERVIEW_DOCUMENT_MAX_FILE_SIZE_MB: int = 10
+    INTERVIEW_DOCUMENT_ALLOWED_EXTENSIONS: str = ".pdf,.txt,.md,.docx"
+    INTERVIEW_ARCHIVE_RETENTION_DAYS: int = 90
+    INTERVIEW_SESSION_EXPIRY_HOURS: int = 24
+    INTERVIEW_APPLICATION_COOLDOWN_DAYS: int = 30
+    INTERVIEW_DUPLICATE_WINDOW_SECONDS: int = 600
+    INTERVIEW_QUESTION_TIME_LIMIT_SECONDS: int = 180
+    PUBLIC_BASE_URL: str = ""
+    INTERVIEW_PORTAL_PATH: str = "/interview-portal"
+    REQUIRE_PUBLIC_BASE_URL_FOR_INTERVIEWS: bool = False
+    ENABLE_PUBLIC_BASE_URL_HEALTHCHECK: bool = False
 
     # Employee identity
     GENERATED_EMAIL_DOMAIN: str = "EIACS.com"
@@ -94,6 +106,14 @@ class Settings(BaseSettings):
     @property
     def max_file_size_bytes(self) -> int:
         return self.MAX_FILE_SIZE_MB * 1024 * 1024
+
+    @property
+    def interview_document_allowed_extensions_list(self) -> list[str]:
+        return [ext.strip().lower() for ext in self.INTERVIEW_DOCUMENT_ALLOWED_EXTENSIONS.split(",") if ext.strip()]
+
+    @property
+    def interview_document_max_file_size_bytes(self) -> int:
+        return self.INTERVIEW_DOCUMENT_MAX_FILE_SIZE_MB * 1024 * 1024
 
     @property
     def is_production(self) -> bool:

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getCallDetails } from '../lib/api';
+import { getWebSocketBaseUrl } from '../lib/network';
 import { Call } from '../lib/types';
 
 export const useCallStatus = (callId: number | null) => {
@@ -9,8 +10,7 @@ export const useCallStatus = (callId: number | null) => {
   useEffect(() => {
     if (!callId) return;
 
-    const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-    const wsBaseUrl = apiBaseUrl.replace(/^http/, 'ws');
+    const wsBaseUrl = getWebSocketBaseUrl();
     const token = localStorage.getItem('access_token');
     if (!token) return;
     const wsUrl = `${wsBaseUrl}/ws/calls/${callId}?auth_token=${encodeURIComponent(token)}`;

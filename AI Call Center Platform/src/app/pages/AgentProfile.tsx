@@ -70,6 +70,7 @@ export function AgentProfile() {
   const totalCallsCount = performance?.total_calls ?? 0;
   const rank = performance?.rank ?? "N/A";
   const skills = (performance?.skills_matrix ?? agent.skills) || {};
+  const backPath = userRole === 'agent' ? '/' : '/intelligence';
 
   const tc = (tierConfig as any)[agent.tier?.toLowerCase()] || tierConfig.bronze;
   const scoreColor = avgScore >= 85 ? '#10b981' : avgScore >= 70 ? '#f59e0b' : '#ef4444';
@@ -95,7 +96,7 @@ export function AgentProfile() {
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center gap-4">
-        <button onClick={() => navigate('/intelligence')} className="size-8 flex items-center justify-center rounded-lg bg-secondary text-muted-foreground hover:text-foreground transition-all">
+        <button onClick={() => navigate(backPath)} className="size-8 flex items-center justify-center rounded-lg bg-secondary text-muted-foreground hover:text-foreground transition-all">
           <ChevronLeft size={16} />
         </button>
         {(canCreateCoachingNote || canCreateCoachingEscalation) && (
@@ -202,6 +203,18 @@ export function AgentProfile() {
               })}
             </div>
           </div>
+
+          <div className="bg-card border border-border rounded-2xl p-4">
+            <h3 className="text-foreground text-xs font-semibold mb-3">Personal Details</h3>
+            <div className="space-y-3">
+              <ProfileDetail icon={Mail} label="Company Email" value={agent.email || 'N/A'} />
+              <ProfileDetail icon={Mail} label="Personal Email" value={agent.otp_email || 'N/A'} />
+              <ProfileDetail icon={Phone} label="Phone Number" value={agent.phone_number || 'N/A'} />
+              <ProfileDetail icon={Users} label="Employee Code" value={agent.employee_code || 'N/A'} />
+              <ProfileDetail icon={Target} label="Department" value={agent.department || 'N/A'} />
+              <ProfileDetail icon={Award} label="Role" value={(agent.role || 'AGENT').replaceAll('_', ' ')} />
+            </div>
+          </div>
         </div>
 
         {/* Charts */}
@@ -298,6 +311,28 @@ export function AgentProfile() {
             )}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ProfileDetail({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="flex items-start gap-3 rounded-xl bg-secondary/40 px-3 py-3">
+      <div className="mt-0.5 text-primary">
+        <Icon size={14} />
+      </div>
+      <div className="min-w-0">
+        <p className="text-[11px] text-muted-foreground">{label}</p>
+        <p className="text-xs text-foreground break-words">{value}</p>
       </div>
     </div>
   );

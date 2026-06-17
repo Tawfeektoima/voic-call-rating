@@ -68,6 +68,12 @@ export const PERMISSIONS = {
   VIEW_TEAM_LEADER_WORKSPACE: 'team_leader.workspace.view',
   VIEW_NOTES: 'notes.view',
   MANAGE_KPI_THRESHOLDS: 'kpi_thresholds.manage',
+  MANAGE_INTERVIEW_JOBS: 'hr.interviews.jobs.manage',
+  VIEW_INTERVIEW_CANDIDATES: 'hr.interviews.candidates.view',
+  MANAGE_INTERVIEW_CANDIDATES: 'hr.interviews.candidates.manage',
+  REVIEW_INTERVIEW_EVALUATIONS: 'hr.interviews.evaluations.review',
+  CONVERT_INTERVIEW_CANDIDATES: 'hr.interviews.candidates.convert',
+  EXPORT_INTERVIEW_DATA: 'hr.interviews.export',
 } as const;
 
 export type Permission = typeof PERMISSIONS[keyof typeof PERMISSIONS];
@@ -99,6 +105,12 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     PERMISSIONS.MANAGE_EMPLOYEES,
     PERMISSIONS.CHANGE_EMPLOYEE_ROLE,
     PERMISSIONS.CHANGE_EMPLOYEE_STATUS,
+    PERMISSIONS.MANAGE_INTERVIEW_JOBS,
+    PERMISSIONS.VIEW_INTERVIEW_CANDIDATES,
+    PERMISSIONS.MANAGE_INTERVIEW_CANDIDATES,
+    PERMISSIONS.REVIEW_INTERVIEW_EVALUATIONS,
+    PERMISSIONS.CONVERT_INTERVIEW_CANDIDATES,
+    PERMISSIONS.EXPORT_INTERVIEW_DATA,
     PERMISSIONS.VIEW_NOTES,
   ],
   [UserRole.QA]: [

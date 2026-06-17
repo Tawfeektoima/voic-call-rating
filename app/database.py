@@ -39,10 +39,27 @@ if settings.ENVIRONMENT.lower() != "production":
         with engine.begin() as conn:
             from sqlalchemy import text
 
-            conn.execute(
-                text(
-                    "ALTER TABLE employees ADD COLUMN status VARCHAR(50) DEFAULT 'active' NOT NULL"
+            def _column_exists(table_name: str, column_name: str) -> bool:
+                rows = conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
+                return any(row[1] == column_name for row in rows)
+
+            if not _column_exists("employees", "status"):
+                conn.execute(
+                    text(
+                        "ALTER TABLE employees ADD COLUMN status VARCHAR(50) DEFAULT 'active' NOT NULL"
+                    )
                 )
-            )
+            if not _column_exists("interview_candidates", "date_of_birth_encrypted"):
+                conn.execute(
+                    text(
+                        "ALTER TABLE interview_candidates ADD COLUMN date_of_birth_encrypted TEXT"
+                    )
+                )
+            if not _column_exists("interview_candidates", "address_encrypted"):
+                conn.execute(
+                    text(
+                        "ALTER TABLE interview_candidates ADD COLUMN address_encrypted TEXT"
+                    )
+                )
     except Exception:
         pass

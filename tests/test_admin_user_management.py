@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.main import app
 from app.database import SessionLocal
-from app.models import Employee, UserRole, EmployeeStatus, SystemLog, AuditEvent
+from app.models import Employee, UserRole, EmployeeStatus, SystemLog, AuditEvent, Team, Campaign
 from app.routers.auth import get_current_user
 from app.security import verify_password
 
@@ -13,10 +13,15 @@ client = TestClient(app)
 def cleanup_test_employees():
     db: Session = SessionLocal()
     try:
+        db.query(Team).filter(Team.name.like("Mgmt Team%")).delete(synchronize_session=False)
+        db.query(Campaign).filter(Campaign.name.like("Mgmt Campaign%")).delete(synchronize_session=False)
         db.query(Employee).filter(Employee.email.like("test_mgmt_%")).delete(synchronize_session=False)
+        db.query(Employee).filter(Employee.email.like("mgmt_tl_%")).delete(synchronize_session=False)
         db.query(Employee).filter(Employee.employee_code == "MGMT_DEFAULT_PASSWORD").delete(synchronize_session=False)
+        db.query(Employee).filter(Employee.employee_code.like("MGMT_TL_%")).delete(synchronize_session=False)
         db.query(SystemLog).filter(SystemLog.error_type.in_(["ROLE_CHANGE", "STATUS_CHANGE"])).delete(synchronize_session=False)
         db.query(AuditEvent).filter(AuditEvent.target.like("Employee test_mgmt_%")).delete(synchronize_session=False)
+        db.query(AuditEvent).filter(AuditEvent.target.like("Team Mgmt Team%")).delete(synchronize_session=False)
         db.commit()
     finally:
         db.close()
@@ -425,5 +430,109 @@ def test_non_hr_cannot_update_employee_status():
     )
     assert response.status_code == 403
     assert "HR managers" in response.json()["detail"]
+    app.dependency_overrides.clear()
+
+
+def test_hr_manager_can_assign_team_leader_to_team():
+    """Verify that HR can assign a team leader to a team and previous active team ownership is cleared."""
+    app.dependency_overrides[get_current_user] = lambda: Employee(
+        id=9003,
+        name="Mock HR Manager",
+        email="test_mgmt_hr@example.com",
+        role=UserRole.HR_MANAGER,
+        employee_code="TEST_MGMT_HR",
+        hashed_password="fake",
+        status="active"
+    )
+
+    db: Session = SessionLocal()
+    try:
+        campaign = Campaign(
+            id=99001,
+            name="Mgmt Campaign Team Leader",
+            evaluation_prompt="A sufficiently long prompt for management tests.",
+            color="#123456",
+        )
+        leader = Employee(
+            id=99002,
+            name="Mgmt Team Leader",
+            email="mgmt_tl_assign@example.com",
+            role=UserRole.TEAM_LEADER,
+            employee_code="MGMT_TL_ASSIGN",
+            hashed_password="fake",
+            status="active",
+        )
+        old_team = Team(id=99003, name="Mgmt Team Alpha", campaign_id=campaign.id, is_active=True, leader_id=leader.id)
+        new_team = Team(id=99004, name="Mgmt Team Beta", campaign_id=campaign.id, is_active=True)
+        db.add_all([campaign, leader, old_team, new_team])
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.put("/api/admin/teams/99004/leader", json={"leader_id": 99002})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["leader_id"] == 99002
+    assert data["leader_name"] == "Mgmt Team Leader"
+
+    db = SessionLocal()
+    try:
+        old_team = db.query(Team).filter(Team.id == 99003).first()
+        new_team = db.query(Team).filter(Team.id == 99004).first()
+        assert old_team is not None and old_team.leader_id is None
+        assert new_team is not None and new_team.leader_id == 99002
+
+        audit = db.query(AuditEvent).filter(
+            AuditEvent.action == "TEAM_LEADER_ASSIGNMENT_CHANGE",
+            AuditEvent.actor_email == "test_mgmt_hr@example.com",
+            AuditEvent.target.like("Team Mgmt Team Beta%")
+        ).first()
+        assert audit is not None
+        assert audit.success is True
+    finally:
+        db.close()
+
+    app.dependency_overrides.clear()
+
+
+def test_assign_team_leader_rejects_non_team_leader_employee():
+    """Verify assignment endpoint rejects employees who do not hold the TEAM_LEADER role."""
+    app.dependency_overrides[get_current_user] = lambda: Employee(
+        id=9001,
+        name="Mock Admin User",
+        email="test_mgmt_admin@example.com",
+        role=UserRole.ADMIN,
+        employee_code="TEST_MGMT_ADMIN",
+        hashed_password="fake",
+        status="active"
+    )
+
+    db: Session = SessionLocal()
+    try:
+        campaign = Campaign(
+            id=99011,
+            name="Mgmt Campaign Invalid Leader",
+            evaluation_prompt="A sufficiently long prompt for invalid leader tests.",
+            color="#654321",
+        )
+        agent = Employee(
+            id=99012,
+            name="Mgmt Agent",
+            email="mgmt_tl_invalid@example.com",
+            role=UserRole.AGENT,
+            employee_code="MGMT_TL_INVALID",
+            hashed_password="fake",
+            status="active",
+        )
+        team = Team(id=99013, name="Mgmt Team Invalid", campaign_id=campaign.id, is_active=True)
+        db.add_all([campaign, agent, team])
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.put("/api/admin/teams/99013/leader", json={"leader_id": 99012})
+    assert response.status_code == 400
+    assert "TEAM_LEADER" in response.json()["detail"]
+
     app.dependency_overrides.clear()
 

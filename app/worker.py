@@ -8,7 +8,22 @@ import tempfile
 from celery import Celery
 from datetime import datetime, timezone
 from app.database import SessionLocal
-from app.models import Call, Campaign, CallStatus, SystemLog, CallOutcome, Employee, CallQAPair, GoldenPairCandidate, CandidateStatus, AgentViolation
+from app.models import (
+    AgentViolation,
+    Call,
+    CallOutcome,
+    CallQAPair,
+    CallStatus,
+    Campaign,
+    CandidateStatus,
+    Employee,
+    GoldenPairCandidate,
+    InterviewAnswer,
+    InterviewAnswerStatus,
+    InterviewCandidateStatus,
+    InterviewSessionStatus,
+    SystemLog,
+)
 from app.services.transcription import transcriber
 import logging
 
@@ -18,6 +33,7 @@ logging.basicConfig(level=logging.INFO)
 from app.services.analysis import evaluate_transcript, assign_speakers, CAMPAIGN_EXTRACTION_RULES
 from app.services.acoustic import AcousticAnalyzer
 from app.config import get_settings
+from app.services.interview_workflow import create_interview_workflow_event, sync_candidate_interview_state
 
 settings = get_settings()
 acoustic_analyzer = AcousticAnalyzer()
@@ -177,6 +193,144 @@ def _cleanup_partial_evaluation_records(db, call_id: int):
 
 def _has_completed_evaluation(db, call_id: int) -> bool:
     return db.query(CallOutcome.id).filter(CallOutcome.call_id == call_id).first() is not None
+
+
+def _build_interview_evaluation_prompt(answer: InterviewAnswer) -> str:
+    question = answer.question
+    candidate = answer.candidate
+    job = answer.session.job if answer.session is not None else candidate.job
+    expected_skills = question.expected_skills_tags or []
+    skills_line = ", ".join(str(item) for item in expected_skills) if isinstance(expected_skills, list) else str(expected_skills or "")
+    return (
+        "You are evaluating a structured hiring interview answer.\n"
+        f"Role Title: {job.title if job is not None else 'Unknown role'}\n"
+        f"Department: {job.department if job is not None and job.department else 'Unspecified'}\n"
+        f"Interview Question: {question.question_text}\n"
+        f"Expected Skills: {skills_line or 'General communication, clarity, and relevance'}\n"
+        "Score the candidate answer for relevance, clarity, communication quality, and practical fit for the role. "
+        "Treat the candidate as the person being evaluated and do not invent a customer/agent dialogue."
+    )
+
+
+def _build_interview_transcript(answer: InterviewAnswer) -> str:
+    response_text = (answer.transcribed_text or "").strip()
+    return (
+        f"Interviewer: {answer.question.question_text.strip()}\n"
+        f"Candidate: {response_text}"
+    )
+
+
+@celery_app.task(bind=True, name="interview.process_answer")
+def process_interview_answer_task(self, answer_id: int):
+    print_worker_vram(f"PRE-TASK - Interview Answer ID {answer_id}")
+    is_healthy, redis_error = check_redis_health()
+    if not is_healthy:
+        print(f"[!] Interview task proceeding despite Redis health warning: {redis_error}")
+
+    db = SessionLocal()
+    try:
+        answer = db.query(InterviewAnswer).filter(InterviewAnswer.id == answer_id).first()
+        if answer is None:
+            print(f"[!] Interview answer {answer_id} not found.")
+            return
+
+        if answer.status == InterviewAnswerStatus.EVALUATED and answer.evaluated_at is not None:
+            print(f"[*] Interview answer {answer_id} already evaluated. Skipping duplicate task.")
+            return
+
+        answer.status = InterviewAnswerStatus.PROCESSING
+        answer.error_message = None
+        db.flush()
+        create_interview_workflow_event(
+            db,
+            candidate_id=answer.candidate_id,
+            event_type="ANSWER_EVALUATION_STARTED",
+            note="Interview answer evaluation started",
+            event_payload={"answer_id": answer.id, "question_id": answer.question_id},
+        )
+        db.commit()
+
+        if not answer.transcribed_text:
+            if not answer.audio_file_path or not os.path.exists(answer.audio_file_path):
+                raise ValueError("Interview answer audio file is missing.")
+            raw_segments, _duration = transcriber.process_audio(answer.audio_file_path)
+            raw_segments = filter_hallucinated_segments(raw_segments)
+            transcript_text = " ".join(
+                segment.get("text", "").strip()
+                for segment in raw_segments
+                if segment.get("text")
+            ).strip()
+            if not transcript_text:
+                raise ValueError("Interview answer transcription returned no usable text.")
+            answer.transcribed_text = transcript_text
+
+        interview_prompt = _build_interview_evaluation_prompt(answer)
+        eval_result = evaluate_transcript(
+            transcript=_build_interview_transcript(answer),
+            campaign_prompt=interview_prompt,
+            campaign_type="customer_service",
+            agent_name=answer.candidate.full_name,
+        )
+
+        strengths = ", ".join(
+            item.issue if hasattr(item, "issue") else str(item.get("issue", ""))
+            for item in eval_result.strengths[:3]
+        ).strip(", ")
+        weaknesses = ", ".join(
+            item.issue if hasattr(item, "issue") else str(item.get("issue", ""))
+            for item in eval_result.weaknesses[:3]
+        ).strip(", ")
+        answer.overall_score = float(eval_result.score)
+        answer.ai_summary = eval_result.summary
+        if strengths:
+            answer.ai_summary += f" Strengths: {strengths}."
+        if weaknesses:
+            answer.ai_summary += f" Watchouts: {weaknesses}."
+        answer.status = InterviewAnswerStatus.EVALUATED
+        answer.evaluated_at = datetime.now(timezone.utc)
+        before_status, after_status = sync_candidate_interview_state(db, answer.candidate)
+        create_interview_workflow_event(
+            db,
+            candidate_id=answer.candidate_id,
+            event_type="ANSWER_EVALUATED",
+            from_status=before_status,
+            to_status=after_status,
+            note="Interview answer evaluated successfully",
+            event_payload={"answer_id": answer.id, "question_id": answer.question_id, "overall_score": answer.overall_score},
+        )
+        if before_status != after_status and after_status == InterviewCandidateStatus.EVALUATED.value:
+            create_interview_workflow_event(
+                db,
+                candidate_id=answer.candidate_id,
+                event_type="CANDIDATE_EVALUATED",
+                from_status=before_status,
+                to_status=after_status,
+                note="All interview answers reached terminal evaluation state",
+                event_payload={"final_score": answer.candidate.final_score},
+            )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        answer = db.query(InterviewAnswer).filter(InterviewAnswer.id == answer_id).first()
+        if answer is not None:
+            answer.status = InterviewAnswerStatus.FAILED
+            answer.error_message = str(exc)
+            before_status, after_status = sync_candidate_interview_state(db, answer.candidate)
+            create_interview_workflow_event(
+                db,
+                candidate_id=answer.candidate_id,
+                event_type="ANSWER_EVALUATION_FAILED",
+                from_status=before_status,
+                to_status=after_status,
+                note="Interview answer evaluation failed",
+                event_payload={"answer_id": answer.id, "question_id": answer.question_id, "error": str(exc)},
+            )
+            db.commit()
+        print(f"[!] Interview answer {answer_id} evaluation failed: {exc}")
+    finally:
+        db.close()
+        release_worker_model_resources()
+        print_worker_vram(f"END-TASK - Interview Answer ID {answer_id}")
 
 
 @celery_app.task(bind=True, name="process_call_audio")

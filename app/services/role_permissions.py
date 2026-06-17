@@ -8,25 +8,29 @@ def _permission_description(permission: Permission) -> str:
     return permission.value.replace("_", " ").replace(".", " ")
 
 
-def seed_role_permissions(db: Session) -> None:
+def _ensure_permission_catalog(db: Session) -> dict[str, AppPermission]:
     existing_permissions = {
         item.key: item for item in db.query(AppPermission).all()
     }
     for permission in Permission:
         if permission.value not in existing_permissions:
-            db.add(AppPermission(
+            permission_row = AppPermission(
                 key=permission.value,
                 description=_permission_description(permission),
                 is_active=True,
-            ))
+            )
+            db.add(permission_row)
+            existing_permissions[permission.value] = permission_row
     db.flush()
+    return {
+        item.key: item for item in db.query(AppPermission).all()
+    }
 
+
+def _seed_default_role_permissions(db: Session, permissions_by_key: dict[str, AppPermission]) -> None:
     if db.query(RolePermission).count() > 0:
         return
 
-    permissions_by_key = {
-        item.key: item for item in db.query(AppPermission).all()
-    }
     for role, permissions in ROLE_PERMISSIONS.items():
         for permission in permissions:
             db.add(RolePermission(
@@ -34,6 +38,11 @@ def seed_role_permissions(db: Session) -> None:
                 permission_id=permissions_by_key[permission.value].id,
             ))
     db.flush()
+
+
+def seed_role_permissions(db: Session) -> None:
+    permissions_by_key = _ensure_permission_catalog(db)
+    _seed_default_role_permissions(db, permissions_by_key)
 
 
 def get_role_permission_values(db: Session, role_value) -> tuple[str, ...]:
@@ -81,3 +90,39 @@ def set_role_permission_values(db: Session, role_value, permission_values: list[
     db.flush()
     after = get_role_permission_values(db, role)
     return before, after
+
+
+INTERVIEW_PERMISSION_KEYS: tuple[str, ...] = (
+    "hr.interviews.jobs.manage",
+    "hr.interviews.candidates.view",
+    "hr.interviews.candidates.manage",
+    "hr.interviews.evaluations.review",
+    "hr.interviews.candidates.convert",
+    "hr.interviews.export",
+)
+
+
+def backfill_interview_role_permissions(db: Session) -> None:
+    permissions_by_key = _ensure_permission_catalog(db)
+
+    target_roles = {
+        UserRole.HR_MANAGER: INTERVIEW_PERMISSION_KEYS,
+        UserRole.ADMIN: INTERVIEW_PERMISSION_KEYS,
+    }
+    existing_pairs = {
+        (normalize_role_value(item.role), item.permission_id)
+        for item in db.query(RolePermission).all()
+    }
+
+    for role, permission_keys in target_roles.items():
+        for permission_key in permission_keys:
+            permission_row = permissions_by_key.get(permission_key)
+            if permission_row is None:
+                continue
+            pair = (normalize_role_value(role), permission_row.id)
+            if pair in existing_pairs:
+                continue
+            db.add(RolePermission(role=role, permission_id=permission_row.id))
+            existing_pairs.add(pair)
+
+    db.flush()

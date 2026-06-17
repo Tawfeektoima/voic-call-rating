@@ -4,10 +4,10 @@ from sqlalchemy.orm import Session
 
 from app.main import app
 from app.database import SessionLocal
-from app.models import AgentViolation, AuditEvent, Call, CallStatus, Campaign, Employee, UserRole
+from app.models import AgentViolation, AppPermission, AuditEvent, Call, CallStatus, Campaign, Employee, RolePermission, UserRole
 from app.permissions import ROLE_PERMISSIONS
 from app.routers.auth import get_current_user
-from app.services.role_permissions import set_role_permission_values
+from app.services.role_permissions import backfill_interview_role_permissions, get_role_permission_values, seed_role_permissions, set_role_permission_values
 
 client = TestClient(app)
 
@@ -23,6 +23,8 @@ def cleanup_permission_tests():
         db.query(AgentViolation).filter(AgentViolation.violation_id.like("test_perm_%")).delete(synchronize_session=False)
         db.query(Call).filter(Call.original_filename.like("test_perm_%")).delete(synchronize_session=False)
         db.query(Campaign).filter(Campaign.name.like("test_perm_%")).delete(synchronize_session=False)
+        db.query(RolePermission).delete(synchronize_session=False)
+        db.query(AppPermission).filter(AppPermission.key.like("hr.interviews.%")).delete(synchronize_session=False)
         db.query(AuditEvent).filter(AuditEvent.target.like("Employee test_perm_%")).delete(synchronize_session=False)
         db.query(AuditEvent).filter(AuditEvent.action == "PERMISSION_CHANGE", AuditEvent.target == "Role TEAM_MANAGER").delete(synchronize_session=False)
         db.query(Employee).filter(Employee.email.like("test_perm_%")).delete(synchronize_session=False)
@@ -128,6 +130,74 @@ def test_admin_can_update_role_permissions_and_audit_change():
         assert audit is not None
         assert "notes.view" in audit.before_state
         assert "test permission governance" == audit.reason
+    finally:
+        db.close()
+
+
+def test_get_role_permission_values_restores_missing_permission_catalog_without_overwriting_custom_role_assignments():
+    db: Session = SessionLocal()
+    try:
+        set_role_permission_values(
+            db,
+            UserRole.TEAM_MANAGER,
+            ["team_manager.workspace.view", "profiles.view_agents"],
+        )
+        db.query(AppPermission).filter(AppPermission.key.like("hr.interviews.%")).delete(synchronize_session=False)
+        db.commit()
+
+        permissions = get_role_permission_values(db, UserRole.TEAM_MANAGER)
+
+        assert "team_manager.workspace.view" in permissions
+        assert "profiles.view_agents" in permissions
+        assert "notes.view" not in permissions
+
+        restored_keys = {
+            item.key
+            for item in db.query(AppPermission).filter(AppPermission.key.like("hr.interviews.%")).all()
+        }
+        assert restored_keys == {
+            "hr.interviews.jobs.manage",
+            "hr.interviews.candidates.view",
+            "hr.interviews.candidates.manage",
+            "hr.interviews.evaluations.review",
+            "hr.interviews.candidates.convert",
+            "hr.interviews.export",
+        }
+    finally:
+        db.close()
+
+
+def test_backfill_interview_role_permissions_restores_hr_interview_access():
+    db: Session = SessionLocal()
+    try:
+        seed_role_permissions(db)
+        db.commit()
+
+        interview_manage = (
+            db.query(AppPermission)
+            .filter(AppPermission.key == "hr.interviews.jobs.manage")
+            .first()
+        )
+        assert interview_manage is not None
+
+        db.query(RolePermission).filter(
+            RolePermission.role == UserRole.HR_MANAGER,
+            RolePermission.permission_id == interview_manage.id,
+        ).delete(synchronize_session=False)
+        db.commit()
+
+        backfill_interview_role_permissions(db)
+        db.commit()
+
+        restored = (
+            db.query(RolePermission)
+            .filter(
+                RolePermission.role == UserRole.HR_MANAGER,
+                RolePermission.permission_id == interview_manage.id,
+            )
+            .first()
+        )
+        assert restored is not None
     finally:
         db.close()
 

@@ -13,6 +13,7 @@ const pageTitles: Record<string, string> = {
   '/system-health':  'System Health Monitor',
   '/hr':             'HR Dashboard',
   '/hr/agents':      'Agent Directory',
+  '/hr/interviews':  'Interview Pipeline',
   '/team-leader':    'Team Leader Overview',
   '/team-leader/agents': 'Team Leader Agents',
   '/team-leader/calls':  'Team Leader Calls',

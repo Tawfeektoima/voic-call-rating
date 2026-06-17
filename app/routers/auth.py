@@ -59,6 +59,10 @@ def _issue_login_token(user: Employee, db: Session) -> dict:
             "email": user.email,
             "role": _serialize_role(user.role),
             "permissions": list(get_role_permissions(user.role, db=db)),
+            "qa_scope_team_id": user.qa_scope_team_id,
+            "qa_scope_team_name": user.qa_scope_team.name if user.qa_scope_team else None,
+            "qa_scope_campaign_id": user.qa_scope_campaign_id,
+            "qa_scope_campaign_name": user.qa_scope_campaign.name if user.qa_scope_campaign else None,
             "account_status": user.status,
             "status": user.status
         }
@@ -463,6 +467,10 @@ def get_me(db: Session = Depends(get_db), current_user: Employee = Depends(get_c
         "permissions": list(get_role_permissions(current_user.role, db=db)),
         "campaign_id": None,
         "avatar": current_user.avatar,
+        "qa_scope_team_id": current_user.qa_scope_team_id,
+        "qa_scope_team_name": current_user.qa_scope_team.name if current_user.qa_scope_team else None,
+        "qa_scope_campaign_id": current_user.qa_scope_campaign_id,
+        "qa_scope_campaign_name": current_user.qa_scope_campaign.name if current_user.qa_scope_campaign else None,
         "account_status": current_user.status,
         "status": current_user.status
     }

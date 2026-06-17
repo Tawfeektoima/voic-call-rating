@@ -6,8 +6,12 @@ import {
   cancelTeamManagerTransferRequest,
   createTeamManagerTransferRequest,
   getTeamManagerAgents,
+  getTeamManagerAttendanceReport,
+  getTeamManagerConversionReport,
   getTeamManagerDashboard,
   getTeamManagerKpis,
+  getTeamManagerRevenueReport,
+  getTeamManagerSalesReport,
   getTeamManagerTransferRequests,
   getApiErrorMessage,
 } from '../lib/api';
@@ -20,8 +24,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Textarea } from '../components/ui/textarea';
 import { Input } from '../components/ui/input';
 
-function currentMonthValue() {
-  return new Date().toISOString().slice(0, 7);
+function currentMonthDateRange() {
+  const today = new Date();
+  const start = new Date(today.getFullYear(), today.getMonth(), 1);
+  return {
+    start: start.toISOString().slice(0, 10),
+    end: today.toISOString().slice(0, 10),
+  };
+}
+
+function toStartDateParam(value: string) {
+  return value ? `${value}T00:00:00` : undefined;
+}
+
+function toEndDateParam(value: string) {
+  return value ? `${value}T23:59:59.999999` : undefined;
 }
 
 function formatCurrency(value: number) {
@@ -71,7 +88,7 @@ function InlineMetric({ label, value }: { label: string; value: string }) {
 export function TeamManagerWorkspace() {
   const queryClient = useQueryClient();
   const [selectedTeamId, setSelectedTeamId] = useState('all');
-  const [month, setMonth] = useState(currentMonthValue());
+  const [dateRange, setDateRange] = useState(currentMonthDateRange());
   const [transferForm, setTransferForm] = useState({
     agentId: '',
     fromTeamId: '',
@@ -79,17 +96,41 @@ export function TeamManagerWorkspace() {
     reason: '',
   });
 
+  const reportParams = useMemo(() => ({
+    start_date: toStartDateParam(dateRange.start),
+    end_date: toEndDateParam(dateRange.end),
+  }), [dateRange.end, dateRange.start]);
+
   const dashboardQuery = useQuery({
-    queryKey: ['team-manager-dashboard'],
-    queryFn: getTeamManagerDashboard,
+    queryKey: ['team-manager-dashboard', reportParams.start_date, reportParams.end_date],
+    queryFn: () => getTeamManagerDashboard(reportParams),
   });
   const agentsQuery = useQuery({
-    queryKey: ['team-manager-agents', selectedTeamId],
-    queryFn: () => getTeamManagerAgents(selectedTeamId === 'all' ? undefined : { team_id: Number(selectedTeamId) }),
+    queryKey: ['team-manager-agents', selectedTeamId, reportParams.start_date, reportParams.end_date],
+    queryFn: () => getTeamManagerAgents({
+      ...(selectedTeamId === 'all' ? {} : { team_id: Number(selectedTeamId) }),
+      ...reportParams,
+    }),
   });
   const kpisQuery = useQuery({
-    queryKey: ['team-manager-kpis', month],
-    queryFn: () => getTeamManagerKpis({ month }),
+    queryKey: ['team-manager-kpis', reportParams.start_date, reportParams.end_date],
+    queryFn: () => getTeamManagerKpis(reportParams),
+  });
+  const salesReportQuery = useQuery({
+    queryKey: ['team-manager-report-sales', reportParams.start_date, reportParams.end_date],
+    queryFn: () => getTeamManagerSalesReport(reportParams),
+  });
+  const revenueReportQuery = useQuery({
+    queryKey: ['team-manager-report-revenue', reportParams.start_date, reportParams.end_date],
+    queryFn: () => getTeamManagerRevenueReport(reportParams),
+  });
+  const conversionReportQuery = useQuery({
+    queryKey: ['team-manager-report-conversion', reportParams.start_date, reportParams.end_date],
+    queryFn: () => getTeamManagerConversionReport(reportParams),
+  });
+  const attendanceReportQuery = useQuery({
+    queryKey: ['team-manager-report-attendance', reportParams.start_date, reportParams.end_date],
+    queryFn: () => getTeamManagerAttendanceReport(reportParams),
   });
   const transferRequestsQuery = useQuery({
     queryKey: ['team-manager-transfer-requests'],
@@ -108,11 +149,11 @@ export function TeamManagerWorkspace() {
   }, [selectedAgent, transferForm.fromTeamId]);
 
   const reports = useMemo(() => ({
-    totalSales: kpisQuery.data?.total_sales ?? dashboardQuery.data?.total_sales ?? 0,
-    totalRevenue: kpisQuery.data?.total_revenue ?? dashboardQuery.data?.total_revenue ?? 0,
-    conversionRate: kpisQuery.data?.average_conversion_rate ?? dashboardQuery.data?.average_conversion_rate ?? 0,
-    attendanceRate: kpisQuery.data?.attendance_rate ?? dashboardQuery.data?.attendance_rate ?? 0,
-  }), [dashboardQuery.data, kpisQuery.data]);
+    totalSales: salesReportQuery.data?.total_sales ?? kpisQuery.data?.total_sales ?? dashboardQuery.data?.total_sales ?? 0,
+    totalRevenue: revenueReportQuery.data?.total_revenue ?? kpisQuery.data?.total_revenue ?? dashboardQuery.data?.total_revenue ?? 0,
+    conversionRate: conversionReportQuery.data?.average_conversion_rate ?? kpisQuery.data?.average_conversion_rate ?? dashboardQuery.data?.average_conversion_rate ?? 0,
+    attendanceRate: attendanceReportQuery.data?.attendance_rate ?? kpisQuery.data?.attendance_rate ?? dashboardQuery.data?.attendance_rate ?? 0,
+  }), [attendanceReportQuery.data, conversionReportQuery.data, dashboardQuery.data, kpisQuery.data, revenueReportQuery.data, salesReportQuery.data]);
 
   const createTransferMutation = useMutation({
     mutationFn: createTeamManagerTransferRequest,
@@ -152,15 +193,19 @@ export function TeamManagerWorkspace() {
     });
   };
 
-  if (dashboardQuery.isLoading || agentsQuery.isLoading || kpisQuery.isLoading || transferRequestsQuery.isLoading) {
+  if (dashboardQuery.isLoading || agentsQuery.isLoading || kpisQuery.isLoading || salesReportQuery.isLoading || revenueReportQuery.isLoading || conversionReportQuery.isLoading || attendanceReportQuery.isLoading || transferRequestsQuery.isLoading) {
     return <PageLoader message="Loading team manager workspace..." />;
   }
 
-  if (dashboardQuery.isError || agentsQuery.isError || kpisQuery.isError || transferRequestsQuery.isError || !dashboardQuery.data || !kpisQuery.data) {
+  if (dashboardQuery.isError || agentsQuery.isError || kpisQuery.isError || salesReportQuery.isError || revenueReportQuery.isError || conversionReportQuery.isError || attendanceReportQuery.isError || transferRequestsQuery.isError || !dashboardQuery.data || !kpisQuery.data) {
     return <ErrorState message="Unable to load the Team Manager workspace." onRetry={() => {
       dashboardQuery.refetch();
       agentsQuery.refetch();
       kpisQuery.refetch();
+      salesReportQuery.refetch();
+      revenueReportQuery.refetch();
+      conversionReportQuery.refetch();
+      attendanceReportQuery.refetch();
       transferRequestsQuery.refetch();
     }} />;
   }
@@ -195,8 +240,21 @@ export function TeamManagerWorkspace() {
             </Select>
           </div>
           <div className="space-y-2 sm:w-44">
-            <p className="text-xs text-muted-foreground">KPI month</p>
-            <Input type="month" value={month} onChange={(event) => setMonth(event.target.value)} />
+            <p className="text-xs text-muted-foreground">Report start</p>
+            <Input
+              type="date"
+              value={dateRange.start}
+              onChange={(event) => setDateRange((current) => ({ ...current, start: event.target.value }))}
+            />
+          </div>
+          <div className="space-y-2 sm:w-44">
+            <p className="text-xs text-muted-foreground">Report end</p>
+            <Input
+              type="date"
+              value={dateRange.end}
+              min={dateRange.start}
+              onChange={(event) => setDateRange((current) => ({ ...current, end: event.target.value }))}
+            />
           </div>
         </div>
       </div>
@@ -309,9 +367,9 @@ export function TeamManagerWorkspace() {
               <ReportTile label="Conversion" value={formatPercent(reports.conversionRate)} />
               <ReportTile label="Attendance" value={formatPercent(reports.attendanceRate)} />
               <ReportTile label="QA Score" value={kpis.average_qa_score.toFixed(1)} />
-              <ReportTile label="KPI Month" value={kpis.month} />
+              <ReportTile label="Period" value={kpis.period_label || `${dateRange.start} to ${dateRange.end}`} />
             </div>
-            <p className="text-xs text-muted-foreground">Report cards use monthly KPI data scoped by the backend to the current manager.</p>
+            <p className="text-xs text-muted-foreground">Report cards use the selected date range and stay scoped by the backend to the current manager.</p>
           </CardContent>
         </Card>
       </div>

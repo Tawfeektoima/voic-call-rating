@@ -11,6 +11,7 @@ from app.services.aggregation import get_common_weaknesses, calculate_core_kpis
 from app.routers.auth import get_current_user
 from app.models import UserRole
 from app.permissions import Permission, require_permission
+from app.services.team_scope import scope_call_query_to_qa, scope_employee_query_to_qa, is_agent_in_qa_scope
 
 router = APIRouter(prefix="/api/analytics", tags=["Analytics & Dashboard"])
 
@@ -50,6 +51,10 @@ def get_ranking(
         .filter(Call.status == CallStatus.EVALUATED)
         .group_by(Employee.id)
     )
+    if current_user.role == UserRole.QA:
+        query = scope_employee_query_to_qa(query, db, current_user.id)
+        if current_user.qa_scope_campaign_id is not None:
+            query = query.filter(Call.campaign_id == current_user.qa_scope_campaign_id)
 
     if bottom:
         # Lowest scores first
@@ -91,6 +96,8 @@ def search_calls(
     """
     _require_people_analytics_access(current_user)
     query = db.query(Call)
+    if current_user.role == UserRole.QA:
+        query = scope_call_query_to_qa(query, db, current_user.id)
 
     if min_id:
         query = query.filter(Call.id >= min_id)
@@ -140,6 +147,8 @@ def get_my_performance(
             raise HTTPException(status_code=403, detail="You can only view your own performance.")
     else:
         _require_people_analytics_access(current_user)
+        if current_user.role == UserRole.QA and not is_agent_in_qa_scope(db, current_user.id, employee_id):
+            raise HTTPException(status_code=403, detail="You do not have permission to view this employee.")
 
     # 1. Fetch Employee
     employee = db.query(Employee).filter(Employee.id == employee_id).first()
@@ -215,6 +224,8 @@ def get_agent_details(
             raise HTTPException(status_code=403, detail="You can only view your own profile.")
     else:
         _require_people_analytics_access(current_user)
+        if current_user.role == UserRole.QA and not is_agent_in_qa_scope(db, current_user.id, employee_id):
+            raise HTTPException(status_code=403, detail="You do not have permission to view this agent.")
 
     agent = db.query(Employee).filter(Employee.id == employee_id).first()
     if not agent:
@@ -234,9 +245,12 @@ def get_leads(
     Get all calls that have a lead status (Hot, Warm, Cold).
     """
     _require_people_analytics_access(current_user)
+    query = db.query(Call)
+    if current_user.role == UserRole.QA:
+        query = scope_call_query_to_qa(query, db, current_user.id)
 
     return (
-        db.query(Call)
+        query
         .filter(Call.lead_status.isnot(None))
         .order_by(desc(Call.created_at))
         .offset(offset)
@@ -256,8 +270,11 @@ def get_golden_moments(
     Get all calls flagged as golden moments.
     """
     _require_people_analytics_access(current_user)
+    query = db.query(Call)
+    if current_user.role == UserRole.QA:
+        query = scope_call_query_to_qa(query, db, current_user.id)
     return (
-        db.query(Call)
+        query
         .filter(Call.is_golden_moment == True)
         .order_by(desc(Call.created_at))
         .offset(offset)
@@ -277,12 +294,24 @@ def get_dashboard_kpis(
     Retrieve high-level KPIs for the main dashboard.
     """
     employee_id = None
+    qa_team_id = None
+    qa_campaign_id = None
     if current_user.role == UserRole.AGENT:
         employee_id = current_user.id
     else:
         _require_people_analytics_access(current_user)
+        if current_user.role == UserRole.QA:
+            qa_team_id = current_user.qa_scope_team_id
+            qa_campaign_id = current_user.qa_scope_campaign_id
 
-    kpis = calculate_core_kpis(db, date_from=date_from, date_to=date_to, employee_id=employee_id)
+    kpis = calculate_core_kpis(
+        db,
+        date_from=date_from,
+        date_to=date_to,
+        employee_id=employee_id,
+        team_id=qa_team_id,
+        campaign_id=qa_campaign_id,
+    )
 
     # Weekly Trend (Last 5 days)
     weekly_trend = [
@@ -305,6 +334,8 @@ def get_dashboard_kpis(
 
     if employee_id:
         campaigns_perf_query = campaigns_perf_query.filter(Call.employee_id == employee_id)
+    elif current_user.role == UserRole.QA:
+        campaigns_perf_query = scope_call_query_to_qa(campaigns_perf_query, db, current_user.id)
 
     if date_from:
         campaigns_perf_query = campaigns_perf_query.filter(Call.created_at >= date_from)

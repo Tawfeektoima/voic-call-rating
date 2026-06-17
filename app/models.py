@@ -116,6 +116,8 @@ class Employee(Base):
     national_id_hash = Column(String(128), nullable=True, unique=True, index=True)
     hashed_password = Column(String(255), nullable=False)
     role       = Column(SAEnum(UserRole), default=UserRole.AGENT, nullable=False, index=True)
+    qa_scope_team_id = Column(Integer, ForeignKey("teams.id"), nullable=True, index=True)
+    qa_scope_campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=True, index=True)
     avatar     = Column(String(255), nullable=True) # URL or initials
     tier       = Column(SAEnum(EmployeeTier), default=EmployeeTier.BRONZE, nullable=False)
     status     = Column(String(50), default="active", nullable=False, index=True)
@@ -129,12 +131,27 @@ class Employee(Base):
     calls = relationship("Call", back_populates="employee", lazy="dynamic")
     mastery_stats = relationship("AgentMasteryStats", back_populates="employee", uselist=False, cascade="all, delete-orphan")
     coaching_sessions = relationship("CoachingSession", back_populates="employee", cascade="all, delete-orphan")
-    violations = relationship("AgentViolation", back_populates="employee", cascade="all, delete-orphan")
+    violations = relationship(
+        "AgentViolation",
+        back_populates="employee",
+        cascade="all, delete-orphan",
+        foreign_keys="AgentViolation.employee_id",
+    )
     attendance_records = relationship("AttendanceRecord", back_populates="employee", cascade="all, delete-orphan")
     login_otp_challenges = relationship("LoginOtpChallenge", back_populates="employee", cascade="all, delete-orphan")
+    qa_scope_team = relationship("Team", foreign_keys=[qa_scope_team_id])
+    qa_scope_campaign = relationship("Campaign", foreign_keys=[qa_scope_campaign_id])
 
     def __repr__(self):
         return f"<Employee id={self.id} name={self.name!r}>"
+
+    @property
+    def qa_scope_team_name(self) -> str | None:
+        return self.qa_scope_team.name if self.qa_scope_team else None
+
+    @property
+    def qa_scope_campaign_name(self) -> str | None:
+        return self.qa_scope_campaign.name if self.qa_scope_campaign else None
 
 
 class LoginOtpChallenge(Base):
@@ -428,6 +445,45 @@ class CandidateStatus(str, enum.Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
 
+
+class InterviewJobStatus(str, enum.Enum):
+    DRAFT = "draft"
+    OPEN = "open"
+    PAUSED = "paused"
+    CLOSED = "closed"
+
+
+class InterviewCandidateStatus(str, enum.Enum):
+    APPLIED = "applied"
+    SCREENING = "screening"
+    INTERVIEWING = "interviewing"
+    EVALUATED = "evaluated"
+    SHORTLISTED = "shortlisted"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    ARCHIVED = "archived"
+
+
+class InterviewSessionStatus(str, enum.Enum):
+    INVITED = "invited"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    EXPIRED = "expired"
+    CANCELLED = "cancelled"
+
+
+class InterviewQuestionSource(str, enum.Enum):
+    BASE = "base"
+    CV_AI = "cv_ai"
+    HR_MANUAL = "hr_manual"
+
+
+class InterviewAnswerStatus(str, enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    EVALUATED = "evaluated"
+    FAILED = "failed"
+
 class GoldenPairCandidate(Base):
     """
     Human-in-the-Loop Review Queue for high-quality Q&A pairs.
@@ -468,6 +524,14 @@ class AgentViolation(Base):
     # "Warning" | "1 HR" | "2 HR" | "3 HR" | "Half Day" | "Full Day" | "Termination"
     score_deduction   = Column(Float, default=0.0, nullable=False)
     hr_flagged        = Column(Boolean, default=False, nullable=False, index=True)
+    qa_approved       = Column(Boolean, default=False, nullable=False, index=True)
+    qa_approved_by_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    qa_approved_at    = Column(DateTime(timezone=True), nullable=True)
+    qa_approval_note  = Column(Text, nullable=True)
+    hr_approved       = Column(Boolean, default=False, nullable=False, index=True)
+    hr_approved_by_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    hr_approved_at    = Column(DateTime(timezone=True), nullable=True)
+    hr_approval_note  = Column(Text, nullable=True)
     auto_fail         = Column(Boolean, default=False, nullable=False)
     evidence          = Column(Text, nullable=True)
     timestamp_in_call = Column(String(10), nullable=True)
@@ -477,9 +541,11 @@ class AgentViolation(Base):
                                index=True)
 
     # Relationships
-    employee  = relationship("Employee", back_populates="violations")
+    employee  = relationship("Employee", back_populates="violations", foreign_keys=[employee_id])
     call      = relationship("Call", back_populates="violations")
     campaign  = relationship("Campaign", back_populates="violations")
+    qa_approver = relationship("Employee", foreign_keys=[qa_approved_by_id])
+    hr_approver = relationship("Employee", foreign_keys=[hr_approved_by_id])
 
 
 class ScoreOverrideAudit(Base):
@@ -724,5 +790,206 @@ class KpiThresholdConfig(Base):
     team       = relationship("Team", foreign_keys=[team_id])
     campaign   = relationship("Campaign", foreign_keys=[campaign_id])
     created_by = relationship("Employee", foreign_keys=[created_by_id])
+
+
+class InterviewJob(Base):
+    __tablename__ = "interview_jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(255), nullable=False, index=True)
+    description = Column(Text, nullable=False)
+    department = Column(String(255), nullable=True)
+    team_id = Column(Integer, ForeignKey("teams.id"), nullable=True, index=True)
+    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=True, index=True)
+    status = Column(SAEnum(InterviewJobStatus), default=InterviewJobStatus.DRAFT, nullable=False, index=True)
+    base_questions = Column(JSON, nullable=True)
+    scoring_weights = Column(JSON, nullable=True)
+    mcq_enabled = Column(Boolean, nullable=False, default=False)
+    mcq_questions = Column(JSON, nullable=True)
+    created_by_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    updated_by_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    team = relationship("Team", foreign_keys=[team_id])
+    campaign = relationship("Campaign", foreign_keys=[campaign_id])
+    created_by = relationship("Employee", foreign_keys=[created_by_id])
+    updated_by = relationship("Employee", foreign_keys=[updated_by_id])
+    candidates = relationship("InterviewCandidate", back_populates="job", cascade="all, delete-orphan")
+    sessions = relationship("InterviewSession", back_populates="job", cascade="all, delete-orphan")
+    questions = relationship("InterviewQuestion", back_populates="job", cascade="all, delete-orphan")
+    mcq_submissions = relationship("InterviewMcqSubmission", back_populates="job", cascade="all, delete-orphan")
+
+
+class InterviewCandidate(Base):
+    __tablename__ = "interview_candidates"
+    __table_args__ = (
+        UniqueConstraint("job_id", "contact_email_normalized", name="uq_interview_candidates_job_email_normalized"),
+        Index("ix_interview_candidates_job_status", "job_id", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    job_id = Column(Integer, ForeignKey("interview_jobs.id"), nullable=False, index=True)
+    full_name = Column(String(255), nullable=False, index=True)
+    contact_email = Column(String(255), nullable=False)
+    contact_email_normalized = Column(String(255), nullable=False, index=True)
+    phone_number = Column(String(50), nullable=True)
+    phone_normalized = Column(String(50), nullable=True, index=True)
+    national_id_hash = Column(String(128), nullable=True, index=True)
+    national_id_last4 = Column(String(4), nullable=True)
+    date_of_birth_encrypted = Column(Text, nullable=True)
+    address_encrypted = Column(Text, nullable=True)
+    registration_source = Column(String(50), nullable=False, default="hr", index=True)
+    status = Column(SAEnum(InterviewCandidateStatus), default=InterviewCandidateStatus.APPLIED, nullable=False, index=True)
+    final_score = Column(Float, nullable=True)
+    global_percentile = Column(Float, nullable=True)
+    applied_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    archived_at = Column(DateTime(timezone=True), nullable=True)
+    converted_employee_id = Column(Integer, ForeignKey("employees.id"), nullable=True, unique=True)
+    created_by_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
+
+    job = relationship("InterviewJob", back_populates="candidates")
+    converted_employee = relationship("Employee", foreign_keys=[converted_employee_id])
+    created_by = relationship("Employee", foreign_keys=[created_by_id])
+    documents = relationship("InterviewCandidateDocument", back_populates="candidate", cascade="all, delete-orphan")
+    sessions = relationship("InterviewSession", back_populates="candidate", cascade="all, delete-orphan")
+    questions = relationship("InterviewQuestion", back_populates="candidate", cascade="all, delete-orphan")
+    answers = relationship("InterviewAnswer", back_populates="candidate", cascade="all, delete-orphan")
+    workflow_events = relationship("InterviewWorkflowEvent", back_populates="candidate", cascade="all, delete-orphan")
+    mcq_submissions = relationship("InterviewMcqSubmission", back_populates="candidate", cascade="all, delete-orphan")
+
+
+class InterviewCandidateDocument(Base):
+    __tablename__ = "interview_candidate_documents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    candidate_id = Column(Integer, ForeignKey("interview_candidates.id"), nullable=False, index=True)
+    document_type = Column(String(50), nullable=False, default="cv")
+    original_filename = Column(String(255), nullable=False)
+    storage_path = Column(String(500), nullable=False)
+    content_type = Column(String(100), nullable=True)
+    file_size_bytes = Column(Integer, nullable=True)
+    is_encrypted = Column(Boolean, nullable=False, default=False, index=True)
+    extracted_text = Column(Text, nullable=True)
+    extraction_status = Column(String(50), nullable=False, default="pending", index=True)
+    extraction_error = Column(Text, nullable=True)
+    uploaded_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    candidate = relationship("InterviewCandidate", back_populates="documents")
+
+
+class InterviewSession(Base):
+    __tablename__ = "interview_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    candidate_id = Column(Integer, ForeignKey("interview_candidates.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("interview_jobs.id"), nullable=False, index=True)
+    session_token_hash = Column(String(128), nullable=False, unique=True, index=True)
+    status = Column(SAEnum(InterviewSessionStatus), default=InterviewSessionStatus.INVITED, nullable=False, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    question_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    candidate = relationship("InterviewCandidate", back_populates="sessions")
+    job = relationship("InterviewJob", back_populates="sessions")
+    questions = relationship("InterviewQuestion", back_populates="session", cascade="all, delete-orphan")
+    answers = relationship("InterviewAnswer", back_populates="session", cascade="all, delete-orphan")
+    mcq_submission = relationship("InterviewMcqSubmission", back_populates="session", uselist=False, cascade="all, delete-orphan")
+
+
+class InterviewQuestion(Base):
+    __tablename__ = "interview_questions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    job_id = Column(Integer, ForeignKey("interview_jobs.id"), nullable=False, index=True)
+    session_id = Column(Integer, ForeignKey("interview_sessions.id"), nullable=True, index=True)
+    candidate_id = Column(Integer, ForeignKey("interview_candidates.id"), nullable=True, index=True)
+    question_text = Column(Text, nullable=False)
+    expected_skills_tags = Column(JSON, nullable=True)
+    source = Column(SAEnum(InterviewQuestionSource), nullable=False, default=InterviewQuestionSource.BASE)
+    display_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    job = relationship("InterviewJob", back_populates="questions")
+    session = relationship("InterviewSession", back_populates="questions")
+    candidate = relationship("InterviewCandidate", back_populates="questions")
+    answers = relationship("InterviewAnswer", back_populates="question", cascade="all, delete-orphan")
+
+
+class InterviewAnswer(Base):
+    __tablename__ = "interview_answers"
+    __table_args__ = (
+        UniqueConstraint("session_id", "question_id", name="uq_interview_answers_session_question"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("interview_sessions.id"), nullable=False, index=True)
+    candidate_id = Column(Integer, ForeignKey("interview_candidates.id"), nullable=False, index=True)
+    question_id = Column(Integer, ForeignKey("interview_questions.id"), nullable=False, index=True)
+    audio_file_path = Column(String(500), nullable=True)
+    transcribed_text = Column(Text, nullable=True)
+    relevance_score = Column(Float, nullable=True)
+    fluency_score = Column(Float, nullable=True)
+    grammar_score = Column(Float, nullable=True)
+    overall_score = Column(Float, nullable=True)
+    ai_summary = Column(Text, nullable=True)
+    status = Column(SAEnum(InterviewAnswerStatus), nullable=False, default=InterviewAnswerStatus.PENDING, index=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    submitted_at = Column(DateTime(timezone=True), nullable=True)
+    evaluated_at = Column(DateTime(timezone=True), nullable=True)
+    error_message = Column(Text, nullable=True)
+
+    session = relationship("InterviewSession", back_populates="answers")
+    candidate = relationship("InterviewCandidate", back_populates="answers")
+    question = relationship("InterviewQuestion", back_populates="answers")
+
+
+class InterviewMcqSubmission(Base):
+    __tablename__ = "interview_mcq_submissions"
+    __table_args__ = (
+        UniqueConstraint("session_id", name="uq_interview_mcq_submissions_session"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("interview_sessions.id"), nullable=False, index=True)
+    candidate_id = Column(Integer, ForeignKey("interview_candidates.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("interview_jobs.id"), nullable=False, index=True)
+    answers = Column(JSON, nullable=False)
+    question_bank_snapshot = Column(JSON, nullable=False)
+    breakdown = Column(JSON, nullable=True)
+    score = Column(Float, nullable=False, default=0.0)
+    total_questions = Column(Integer, nullable=False, default=0)
+    percentage = Column(Float, nullable=False, default=0.0)
+    completed_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    session = relationship("InterviewSession", back_populates="mcq_submission")
+    candidate = relationship("InterviewCandidate", back_populates="mcq_submissions")
+    job = relationship("InterviewJob", back_populates="mcq_submissions")
+
+
+class InterviewWorkflowEvent(Base):
+    __tablename__ = "interview_workflow_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    candidate_id = Column(Integer, ForeignKey("interview_candidates.id"), nullable=False, index=True)
+    actor_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    event_type = Column(String(100), nullable=False, index=True)
+    from_status = Column(String(50), nullable=True)
+    to_status = Column(String(50), nullable=True)
+    note = Column(Text, nullable=True)
+    event_payload = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    candidate = relationship("InterviewCandidate", back_populates="workflow_events")
+    actor = relationship("Employee", foreign_keys=[actor_id])
 
 

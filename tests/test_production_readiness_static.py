@@ -38,16 +38,19 @@ def test_docs_cover_deployment_checklist():
     assert "npm run build" in readiness
     assert "/api/system/metrics" in readiness
     assert "python run_smoke_test.py" in readiness
+    assert "PUBLIC_BASE_URL" in readiness
 
     assert "python -m compileall app" in readme
     assert "python -m pytest -q tests" in readme
     assert "npm test && npm run build" in readme
+    assert "PUBLIC_BASE_URL" in readme
 
     assert "SECRET_KEY=" in env_example
     assert "ENVIRONMENT=" in env_example
     assert "DATABASE_URL=" in env_example
     assert "REDIS_PASSWORD=" in env_example
     assert "FRONTEND_URL=" in env_example
+    assert "PUBLIC_BASE_URL=" in env_example
 
 
 def test_smoke_runner_covers_core_release_flow():

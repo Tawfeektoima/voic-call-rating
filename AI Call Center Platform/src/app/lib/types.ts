@@ -20,6 +20,10 @@ export interface CurrentUser {
   role: UserRole;
   permissions?: string[];
   avatar: string;
+  qa_scope_team_id?: number | null;
+  qa_scope_team_name?: string | null;
+  qa_scope_campaign_id?: number | null;
+  qa_scope_campaign_name?: string | null;
   account_status?: string;
 }
 
@@ -29,6 +33,380 @@ export interface RoleDefinition {
   description: string;
   permissions: string[];
   assignable_by_hr: boolean;
+}
+
+export interface TeamDirectoryOut {
+  id: number;
+  name: string;
+  campaign_id?: number | null;
+  campaign_name?: string | null;
+  manager_id?: number | null;
+  manager_name?: string | null;
+  leader_id?: number | null;
+  leader_name?: string | null;
+  is_active: boolean;
+}
+
+export interface InterviewJob {
+  id: number;
+  title: string;
+  description: string;
+  department?: string | null;
+  team_id?: number | null;
+  campaign_id?: number | null;
+  status: string;
+  base_questions?: string[] | null;
+  scoring_weights?: Record<string, number> | null;
+  mcq_enabled: boolean;
+  mcq_questions?: Array<Record<string, unknown>> | null;
+  created_by_id: number;
+  updated_by_id?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InterviewCandidate {
+  id: number;
+  job_id: number;
+  full_name: string;
+  contact_email: string;
+  contact_email_normalized: string;
+  phone_number?: string | null;
+  phone_normalized?: string | null;
+  national_id_last4?: string | null;
+  status: string;
+  final_score?: number | null;
+  global_percentile?: number | null;
+  applied_at: string;
+  completed_at?: string | null;
+  archived_at?: string | null;
+  converted_employee_id?: number | null;
+  created_by_id?: number | null;
+  mcq_score?: number | null;
+  mcq_total_questions?: number | null;
+  mcq_percentage?: number | null;
+  mcq_completed_at?: string | null;
+}
+
+export interface InterviewCandidateDocument {
+  id: number;
+  candidate_id: number;
+  document_type: string;
+  original_filename: string;
+  content_type?: string | null;
+  file_size_bytes?: number | null;
+  extraction_status: string;
+  extraction_error?: string | null;
+  uploaded_at: string;
+}
+
+export interface InterviewCandidateTimelineEvent {
+  id: number;
+  candidate_id: number;
+  actor_id?: number | null;
+  actor_name?: string | null;
+  event_type: string;
+  from_status?: string | null;
+  to_status?: string | null;
+  note?: string | null;
+  event_payload?: Record<string, any> | null;
+  created_at: string;
+}
+
+export interface InterviewPortalJob {
+  id: number;
+  title: string;
+  description: string;
+  department?: string | null;
+  mcq_enabled: boolean;
+}
+
+export interface InterviewPortalRegistrationOut {
+  status: string;
+  candidate_id: number;
+  candidate_name: string;
+  job_id: number;
+  job_title: string;
+  session_id: number;
+  session_token: string;
+  invite_url?: string | null;
+  expires_at: string;
+  question_count: number;
+  duplicate_recent: boolean;
+  document_id?: number | null;
+  document_extraction_status?: string | null;
+}
+
+export interface InterviewAnswer {
+  id: number;
+  session_id: number;
+  candidate_id: number;
+  question_id: number;
+  transcribed_text?: string | null;
+  relevance_score?: number | null;
+  fluency_score?: number | null;
+  grammar_score?: number | null;
+  overall_score?: number | null;
+  ai_summary?: string | null;
+  status: string;
+  started_at?: string | null;
+  submitted_at?: string | null;
+  evaluated_at?: string | null;
+  error_message?: string | null;
+}
+
+export interface InterviewCandidateInviteOut {
+  candidate_id: number;
+  session_id: number;
+  session_token: string;
+  invite_url?: string | null;
+  expires_at: string;
+  question_count: number;
+}
+
+export interface InterviewPortalSessionOut {
+  candidate_id: number;
+  candidate_name: string;
+  job_id: number;
+  job_title: string;
+  session_id: number;
+  status: string;
+  expires_at: string;
+  question_count: number;
+  mcq_enabled: boolean;
+  mcq_completed: boolean;
+  mcq_question_count: number;
+  question_time_limit_seconds: number;
+}
+
+export interface InterviewMcqQuestionOut {
+  id: number;
+  category: string;
+  question: string;
+  options: string[];
+  type: string;
+  correct?: number | null;
+  trait_tags?: string[];
+}
+
+export interface InterviewMcqPortalOut {
+  mcq_enabled: boolean;
+  mcq_completed: boolean;
+  question_count: number;
+  questions: InterviewMcqQuestionOut[];
+}
+
+export interface InterviewMcqSubmissionOut {
+  id: number;
+  session_id: number;
+  candidate_id: number;
+  job_id: number;
+  answers: Record<string, number>;
+  question_bank_snapshot: Array<Record<string, unknown>>;
+  breakdown?: Record<string, unknown> | null;
+  score: number;
+  total_questions: number;
+  percentage: number;
+  completed_at: string;
+  created_at: string;
+}
+
+export interface InterviewMcqReviewQuestionOut {
+  question_id: number;
+  question_text: string;
+  options: string[];
+  user_answer?: number | null;
+  correct_answer?: number | null;
+  type?: string | null;
+  is_correct?: boolean | null;
+  trait_tags: string[];
+  chosen_trait?: string | null;
+}
+
+export interface InterviewMcqReviewOut {
+  status: string;
+  candidate_id: number;
+  candidate_name: string;
+  score: number;
+  total_questions: number;
+  percentage: number;
+  completed_at?: string | null;
+  iq: InterviewMcqReviewQuestionOut[];
+  computer: InterviewMcqReviewQuestionOut[];
+  personality: InterviewMcqReviewQuestionOut[];
+  personality_breakdown: Record<string, number>;
+}
+
+export interface InterviewCandidateReviewAnswer {
+  answer_id: number;
+  question_id: number;
+  question_text: string;
+  overall_score?: number | null;
+  status: string;
+  ai_summary?: string | null;
+  transcribed_text?: string | null;
+  submitted_at?: string | null;
+  evaluated_at?: string | null;
+  error_message?: string | null;
+}
+
+export interface InterviewCandidateReviewMetrics {
+  evaluation_state: string;
+  submitted_answers: number;
+  evaluated_answers: number;
+  average_answer_score?: number | null;
+  strongest_answer_score?: number | null;
+  weakest_answer_score?: number | null;
+}
+
+export interface InterviewCandidateReviewMcqSummary {
+  completed: boolean;
+  score?: number | null;
+  total_questions?: number | null;
+  percentage?: number | null;
+  completed_at?: string | null;
+  objective_breakdown: Record<string, number>;
+  personality_breakdown: Record<string, number>;
+}
+
+export interface InterviewCandidateRecommendation {
+  label: string;
+  score?: number | null;
+  rationale: string;
+  strengths: string[];
+  concerns: string[];
+}
+
+export interface InterviewCandidateReviewOut {
+  status: string;
+  candidate: InterviewCandidate;
+  interview_metrics: InterviewCandidateReviewMetrics;
+  mcq_summary: InterviewCandidateReviewMcqSummary;
+  recommendation: InterviewCandidateRecommendation;
+  answers: InterviewCandidateReviewAnswer[];
+}
+
+export interface InterviewQuestionOut {
+  id: number;
+  job_id: number;
+  session_id?: number | null;
+  candidate_id?: number | null;
+  question_text: string;
+  expected_skills_tags?: Record<string, unknown> | unknown[] | null;
+  source: string;
+  display_order: number;
+  created_at: string;
+}
+
+export interface InterviewAnswerSubmitOut {
+  answer_id: number;
+  session_id: number;
+  question_id: number;
+  status: string;
+  transcribed_text?: string | null;
+}
+
+export interface InterviewQuestionStartOut {
+  answer_id: number;
+  session_id: number;
+  question_id: number;
+  status: string;
+  started_at: string;
+  time_limit_seconds: number;
+}
+
+export interface InterviewPortalAnswerHistory {
+  answer_id: number;
+  question_id: number;
+  question_text: string;
+  status: string;
+  overall_score?: number | null;
+  ai_summary?: string | null;
+  submitted_at?: string | null;
+  evaluated_at?: string | null;
+}
+
+export interface InterviewPortalMcqResult {
+  completed: boolean;
+  score?: number | null;
+  total_questions?: number | null;
+  percentage?: number | null;
+  completed_at?: string | null;
+  objective_breakdown: Record<string, number>;
+  personality_breakdown: Record<string, number>;
+}
+
+export interface InterviewPortalDashboardOut {
+  candidate_id: number;
+  candidate_name: string;
+  job_id: number;
+  job_title: string;
+  session_id: number;
+  session_status: string;
+  completed_at?: string | null;
+  question_count: number;
+  submitted_answers: number;
+  evaluated_answers: number;
+  average_score?: number | null;
+  answers: InterviewPortalAnswerHistory[];
+  mcq_result: InterviewPortalMcqResult;
+}
+
+export interface InterviewCandidateConversionOut {
+  candidate_id: number;
+  employee_id: number;
+  employee_code: string;
+  employee_email: string;
+  role: string;
+}
+
+export interface InterviewCandidateIdentitySummary {
+  candidate_id: number;
+  full_name: string;
+  job_id: number;
+  job_title?: string | null;
+  department?: string | null;
+  status: string;
+  phone_last4?: string | null;
+  national_id_last4?: string | null;
+  contact_email_masked?: string | null;
+  converted_employee_id?: number | null;
+}
+
+export interface InterviewEmployeeMatch {
+  employee_id: number;
+  employee_code: string;
+  employee_email: string;
+  role: string;
+  status: string;
+}
+
+export interface InterviewCandidateOnboardingReadiness {
+  candidate_id: number;
+  status: string;
+  is_ready: boolean;
+  blocking_reasons: string[];
+  blocking_categories: string[];
+  suggested_employee_code?: string | null;
+  suggested_company_email?: string | null;
+  candidate_identity_summary: InterviewCandidateIdentitySummary;
+  existing_employee_match?: InterviewEmployeeMatch | null;
+}
+
+export interface InterviewCandidateBulkActionOut {
+  requested: number;
+  updated: number;
+  skipped: number;
+  candidate_ids: number[];
+}
+
+export interface InterviewRetentionPurgeOut {
+  archived_candidates_matched: number;
+  candidates_deleted: number;
+  document_rows_deleted: number;
+  answer_audio_files_deleted: number;
+  document_files_deleted: number;
+  dry_run: boolean;
 }
 
 export enum CallStatus {
@@ -79,6 +457,10 @@ export interface Agent {
   tier?: string;
   skills?: Record<string, number>;
   emotion_history?: number[];
+  qa_scope_team_id?: number | null;
+  qa_scope_team_name?: string | null;
+  qa_scope_campaign_id?: number | null;
+  qa_scope_campaign_name?: string | null;
   mastery_stats?: AgentMastery;
   created_at: string; // ISO format string
   status?: string;
@@ -167,6 +549,14 @@ export interface CallViolation {
   penalty_tier: PenaltyTier;
   score_deduction: number;
   hr_flagged: boolean;
+  qa_approved: boolean;
+  qa_approved_by_id: number | null;
+  qa_approved_at: string | null;
+  qa_approval_note: string | null;
+  hr_approved: boolean;
+  hr_approved_by_id: number | null;
+  hr_approved_at: string | null;
+  hr_approval_note: string | null;
   auto_fail: boolean;
   evidence: string | null;
   timestamp_in_call: string | null;
@@ -183,6 +573,30 @@ export interface ViolationSummaryRow {
   hr_flagged_count: number;
   total_deductions: number;
   last_violation_at: string | null;
+}
+
+export interface PendingViolation {
+  violation_id: number;
+  employee_id: number;
+  employee_name: string;
+  team_id: number | null;
+  team_name: string | null;
+  call_id: number;
+  violation_type: string;
+  severity: ViolationSeverity;
+  occurrence: number;
+  penalty_tier: PenaltyTier;
+  evidence: string | null;
+  created_at: string;
+}
+
+export interface ViolationStats {
+  total_violations_today: number;
+  total_violations_this_week: number;
+  most_common_violation: string | null;
+  most_common_violation_count: number;
+  agents_with_hr_flags: number;
+  auto_fails_today: number;
 }
 
 export interface SalesPenalty {
@@ -659,6 +1073,9 @@ export interface TeamManagerAttendanceReportOut {
 
 export interface TeamManagerKpisOut {
   month: string;
+  period_start?: string | null;
+  period_end?: string | null;
+  period_label?: string | null;
   total_sales: number;
   total_revenue: number;
   average_qa_score: number;

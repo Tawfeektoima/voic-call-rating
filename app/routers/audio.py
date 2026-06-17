@@ -18,6 +18,7 @@ from app.routers.auth import get_current_user
 from app.models import UserRole, AgentViolation
 from app.services.audit import log_audit_event
 from app.permissions import Permission, has_permission, require_permission
+from app.services.team_scope import is_call_in_qa_scope
 
 settings = get_settings()
 
@@ -36,6 +37,8 @@ def _remove_file_if_exists(file_path: str):
 
 
 def _can_view_raw_call(current_user: Employee, employee_id: int) -> bool:
+    if current_user.role == UserRole.QA:
+        return False
     if has_permission(current_user, Permission.VIEW_RAW_CALLS):
         return True
     return current_user.role == UserRole.AGENT and current_user.id == employee_id
@@ -310,7 +313,10 @@ def get_call_status(
     if not call:
         raise HTTPException(status_code=404, detail="Call not found")
     
-    if not _can_view_raw_call(current_user, call.employee_id):
+    if current_user.role == UserRole.QA:
+        if not is_call_in_qa_scope(db, current_user.id, call.id):
+            raise HTTPException(status_code=403, detail="You do not have permission to view this call.")
+    elif not _can_view_raw_call(current_user, call.employee_id):
         raise HTTPException(status_code=403, detail="You do not have permission to view this call.")
         
     # Build structured response for UI (Task-UI04)
@@ -387,7 +393,10 @@ def get_call_audio_file(
     if not call or not call.audio_file_path:
         raise HTTPException(status_code=404, detail="Audio file not found")
     
-    if not _can_view_raw_call(current_user, call.employee_id):
+    if current_user.role == UserRole.QA:
+        if not is_call_in_qa_scope(db, current_user.id, call.id):
+            raise HTTPException(status_code=403, detail="You do not have permission to access this file.")
+    elif not _can_view_raw_call(current_user, call.employee_id):
         raise HTTPException(status_code=403, detail="You do not have permission to access this file.")
     
     if not os.path.exists(call.audio_file_path):
@@ -410,6 +419,8 @@ def review_call(
     call = db.query(Call).filter(Call.id == call_id).first()
     if not call:
         raise HTTPException(status_code=404, detail="Call not found")
+    if current_user.role == UserRole.QA and not is_call_in_qa_scope(db, current_user.id, call.id):
+        raise HTTPException(status_code=403, detail="You do not have permission to review this call.")
     
     # Store audit record if score is being changed/overridden
     if review.overridden_score is not None and review.overridden_score != call.overridden_score:
@@ -462,6 +473,8 @@ def update_lead_status(
     call = db.query(Call).filter(Call.id == call_id).first()
     if not call:
         raise HTTPException(status_code=404, detail="Call not found")
+    if current_user.role == UserRole.QA and not is_call_in_qa_scope(db, current_user.id, call.id):
+        raise HTTPException(status_code=403, detail="You do not have permission to update this call.")
 
     call.lead_status = status.lower()
     db.commit()

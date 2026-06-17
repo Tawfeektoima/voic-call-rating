@@ -2,7 +2,7 @@ import { NavLink } from 'react-router';
 import {
   LayoutDashboard, Radio, Phone, BarChart3, Star, UserCircle,
   Database, Activity, ChevronLeft, ChevronRight, Shield, Zap,
-  Users, LogOut, EyeOff, ShieldAlert, Inbox
+  Users, LogOut, EyeOff, ShieldAlert, Inbox, BriefcaseBusiness
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { UserRole } from '../../lib/types';
@@ -16,6 +16,7 @@ interface NavItemConfig {
   icon: React.ElementType;
   permission?: Permission;
   anyPermissions?: Permission[];
+  roles?: UserRole[];
   /** Use NavLink `end` so the root '/' doesn't match all child routes. */
   end?: boolean;
 }
@@ -26,10 +27,11 @@ const navItems: NavItemConfig[] = [
   { path: '/calls',          label: 'Call Explorer',  agentLabel: 'My Calls',     icon: Phone,            anyPermissions: [PERMISSIONS.VIEW_OWN_CALLS, PERMISSIONS.VIEW_RAW_CALLS] },
   { path: '/intelligence',   label: 'BI Hub',                                     icon: BarChart3,         permission: PERMISSIONS.VIEW_BI },
   { path: '/success-library',label: 'Success Library',                            icon: Star,             permission: PERMISSIONS.VIEW_SUCCESS_LIBRARY },
-  { path: '/agents/me',      label: 'Agent Profiles', agentLabel: 'My Profile',   icon: Users,            anyPermissions: [PERMISSIONS.VIEW_OWN_PROFILE, PERMISSIONS.VIEW_AGENT_PROFILES] },
+  { path: '/agents/me',      label: 'Agent Profiles', agentLabel: 'My Profile',   icon: Users,            anyPermissions: [PERMISSIONS.VIEW_OWN_PROFILE, PERMISSIONS.VIEW_AGENT_PROFILES], roles: [UserRole.AGENT, UserRole.ADMIN, UserRole.QA] },
   { path: '/data-center',    label: 'Data Center',                                icon: Database,          permission: PERMISSIONS.VIEW_DATA_CENTER },
   { path: '/hr',             label: 'HR Dashboard',                               icon: ShieldAlert,       permission: PERMISSIONS.VIEW_HR_DASHBOARD },
   { path: '/hr/agents',      label: 'Agent Directory',                            icon: UserCircle,        permission: PERMISSIONS.VIEW_EMPLOYEES },
+  { path: '/hr/interviews',  label: 'Interview Pipeline',                         icon: BriefcaseBusiness, anyPermissions: [PERMISSIONS.MANAGE_INTERVIEW_JOBS, PERMISSIONS.VIEW_INTERVIEW_CANDIDATES] },
   { path: '/team-leader',    label: 'Team Overview',                              icon: LayoutDashboard,   permission: PERMISSIONS.VIEW_TEAM_LEADER_WORKSPACE },
   { path: '/team-leader/agents', label: 'Team Agents',                            icon: Users,             permission: PERMISSIONS.VIEW_TEAM_LEADER_WORKSPACE },
   { path: '/team-leader/calls', label: 'Team Calls',                              icon: Phone,             permission: PERMISSIONS.VIEW_TEAM_LEADER_WORKSPACE },
@@ -49,6 +51,9 @@ export function Sidebar() {
   };
 
   const visibleItems = navItems.filter((item) => {
+    if (item.roles && !item.roles.includes(userRole)) {
+      return false;
+    }
     if (item.permission) {
       return hasPermission(userRole, item.permission, currentUser?.permissions);
     }

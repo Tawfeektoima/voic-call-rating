@@ -17,6 +17,20 @@ def normalize_employee_code(employee_code: str) -> str:
     return str(employee_code or "").strip()
 
 
+EMPLOYEE_CODE_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def validate_employee_code(employee_code: str) -> str:
+    code = normalize_employee_code(employee_code)
+    if not code:
+        raise ValueError("Employee code is required.")
+    if len(code) > 50:
+        raise ValueError("Employee code must be 50 characters or fewer.")
+    if not EMPLOYEE_CODE_PATTERN.match(code):
+        raise ValueError("Employee code may only contain letters, digits, dots, dashes, and underscores.")
+    return code
+
+
 def generate_employee_email(employee_code: str) -> str:
     code = normalize_employee_code(employee_code)
     local_code = re.sub(r"[^a-zA-Z0-9._-]+", "-", code).strip(".-_").lower()

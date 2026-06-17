@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.models import (
     Call, Employee, Campaign, CallOutcome,
-    AgentMasteryStats, CallStatus, UserRole,
+    AgentMasteryStats, CallStatus, UserRole, EmployeeTeamAssignment,
 )
 
 
@@ -179,6 +179,8 @@ class ExportService:
         end_date: Optional[datetime] = None,
         agent_role: Optional[UserRole] = None,
         current_user_role: Optional[UserRole] = None,
+        qa_scope_team_id: Optional[int] = None,
+        qa_scope_campaign_id: Optional[int] = None,
         offset: int = 0,
         limit: int = 5000,
     ):
@@ -205,6 +207,13 @@ class ExportService:
             query = query.filter(Employee.department == department)
         if agent_role:
             query = query.filter(Employee.role == agent_role)
+        if qa_scope_team_id is not None:
+            query = query.join(
+                EmployeeTeamAssignment,
+                (Call.employee_id == EmployeeTeamAssignment.employee_id) & (EmployeeTeamAssignment.is_active == True),
+            ).filter(EmployeeTeamAssignment.team_id == qa_scope_team_id)
+        if qa_scope_campaign_id is not None:
+            query = query.filter(Call.campaign_id == qa_scope_campaign_id)
         if start_date:
             query = query.filter(Call.created_at >= start_date)
         if end_date:

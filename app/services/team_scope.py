@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import and_
 from app.models import Team, EmployeeTeamAssignment, Employee, Call
 from typing import Optional, List
 
@@ -135,3 +136,58 @@ def scope_call_query_to_team_leader(query, db: Session, leader_id: int):
         EmployeeTeamAssignment.team_id.in_(team_ids),
         EmployeeTeamAssignment.is_active == True
     )
+
+
+def get_qa_scope(db: Session, qa_id: int) -> tuple[Optional[int], Optional[int]]:
+    qa_user = db.query(Employee).filter(Employee.id == qa_id).first()
+    if not qa_user:
+        return None, None
+    return qa_user.qa_scope_team_id, qa_user.qa_scope_campaign_id
+
+
+def scope_employee_query_to_qa(query, db: Session, qa_id: int):
+    """Filter employees to the QA user's assigned active team only."""
+    team_id, _ = get_qa_scope(db, qa_id)
+    if not team_id:
+        return query.filter(Employee.id == -1)
+    return query.join(
+        EmployeeTeamAssignment,
+        and_(
+            Employee.id == EmployeeTeamAssignment.employee_id,
+            EmployeeTeamAssignment.is_active == True,
+        ),
+    ).filter(EmployeeTeamAssignment.team_id == team_id)
+
+
+def scope_call_query_to_qa(query, db: Session, qa_id: int):
+    """Filter calls to the QA user's assigned team and optional campaign."""
+    team_id, campaign_id = get_qa_scope(db, qa_id)
+    if not team_id:
+        return query.filter(Call.id == -1)
+    query = query.join(
+        EmployeeTeamAssignment,
+        and_(
+            Call.employee_id == EmployeeTeamAssignment.employee_id,
+            EmployeeTeamAssignment.is_active == True,
+        ),
+    ).filter(EmployeeTeamAssignment.team_id == team_id)
+    if campaign_id is not None:
+        query = query.filter(Call.campaign_id == campaign_id)
+    return query
+
+
+def is_agent_in_qa_scope(db: Session, qa_id: int, agent_id: int) -> bool:
+    team_id, _ = get_qa_scope(db, qa_id)
+    if not team_id:
+        return False
+    assignment = db.query(EmployeeTeamAssignment).filter(
+        EmployeeTeamAssignment.employee_id == agent_id,
+        EmployeeTeamAssignment.team_id == team_id,
+        EmployeeTeamAssignment.is_active == True,
+    ).first()
+    return assignment is not None
+
+
+def is_call_in_qa_scope(db: Session, qa_id: int, call_id: int) -> bool:
+    query = scope_call_query_to_qa(db.query(Call.id), db, qa_id).filter(Call.id == call_id)
+    return query.first() is not None

@@ -35,6 +35,11 @@ from app.schemas import (
 
 router = APIRouter(prefix="/api/team-manager", tags=["Team Manager"])
 
+
+def _validate_date_range(start_date: Optional[datetime], end_date: Optional[datetime]) -> None:
+    if start_date is not None and end_date is not None and start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date cannot be after end_date.")
+
 @router.get('/dashboard', response_model=TeamManagerDashboardOut)
 def get_dashboard(
     start_date: Optional[datetime] = Query(None),
@@ -47,42 +52,54 @@ def get_dashboard(
 
 @router.get('/teams', response_model=List[TeamManagerTeamRowOut])
 def get_teams(
+    start_date: Optional[datetime] = Query(None),
+    end_date: Optional[datetime] = Query(None),
     skip: int = Query(0, ge=0, description='Offset for pagination'),
     limit: int = Query(50, ge=1, le=100, description='Limit for pagination'),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
     require_team_manager_access(current_user)
-    return get_team_manager_teams(db, current_user, skip=skip, limit=limit)
+    _validate_date_range(start_date, end_date)
+    return get_team_manager_teams(db, current_user, start_date=start_date, end_date=end_date, skip=skip, limit=limit)
 
 @router.get('/teams/{team_id}', response_model=TeamManagerTeamRowOut)
 def get_team_detail(
     team_id: int,
+    start_date: Optional[datetime] = Query(None),
+    end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
     require_team_manager_access(current_user)
-    return get_team_manager_team_detail(db, current_user, team_id)
+    _validate_date_range(start_date, end_date)
+    return get_team_manager_team_detail(db, current_user, team_id, start_date=start_date, end_date=end_date)
 
 @router.get('/agents', response_model=List[TeamManagerAgentRowOut])
 def get_agents(
     team_id: Optional[int] = Query(None, description='Optional filter by Team ID'),
+    start_date: Optional[datetime] = Query(None),
+    end_date: Optional[datetime] = Query(None),
     skip: int = Query(0, ge=0, description='Offset for pagination'),
     limit: int = Query(50, ge=1, le=100, description='Limit for pagination'),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
     require_team_manager_access(current_user)
-    return get_team_manager_agents(db, current_user, team_id=team_id, skip=skip, limit=limit)
+    _validate_date_range(start_date, end_date)
+    return get_team_manager_agents(db, current_user, team_id=team_id, start_date=start_date, end_date=end_date, skip=skip, limit=limit)
 
 @router.get('/agents/{agent_id}', response_model=TeamManagerAgentDetailOut)
 def get_agent_detail(
     agent_id: int,
+    start_date: Optional[datetime] = Query(None),
+    end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
     require_team_manager_access(current_user)
-    return get_team_manager_agent_detail(db, current_user, agent_id)
+    _validate_date_range(start_date, end_date)
+    return get_team_manager_agent_detail(db, current_user, agent_id, start_date=start_date, end_date=end_date)
 
 @router.get('/reports/sales', response_model=TeamManagerSalesReportOut)
 def get_sales_report(
@@ -92,6 +109,7 @@ def get_sales_report(
     current_user: Employee = Depends(get_current_user)
 ):
     require_team_manager_access(current_user)
+    _validate_date_range(start_date, end_date)
     return get_team_manager_sales_report(db, current_user, start_date, end_date)
 
 @router.get('/reports/revenue', response_model=TeamManagerRevenueReportOut)
@@ -102,6 +120,7 @@ def get_revenue_report(
     current_user: Employee = Depends(get_current_user)
 ):
     require_team_manager_access(current_user)
+    _validate_date_range(start_date, end_date)
     return get_team_manager_revenue_report(db, current_user, start_date, end_date)
 
 @router.get('/reports/conversion', response_model=TeamManagerConversionReportOut)
@@ -112,6 +131,7 @@ def get_conversion_report(
     current_user: Employee = Depends(get_current_user)
 ):
     require_team_manager_access(current_user)
+    _validate_date_range(start_date, end_date)
     return get_team_manager_conversion_report(db, current_user, start_date, end_date)
 
 @router.get('/reports/attendance', response_model=TeamManagerAttendanceReportOut)
@@ -122,16 +142,22 @@ def get_attendance_report(
     current_user: Employee = Depends(get_current_user)
 ):
     require_team_manager_access(current_user)
+    _validate_date_range(start_date, end_date)
     return get_team_manager_attendance_report(db, current_user, start_date, end_date)
 
 @router.get('/kpis', response_model=TeamManagerKpisOut)
 def get_kpis(
     month: Optional[str] = Query(None),
+    start_date: Optional[datetime] = Query(None),
+    end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
     require_team_manager_access(current_user)
-    return get_team_manager_kpis(db, current_user, month)
+    if month and (start_date is not None or end_date is not None):
+        raise HTTPException(status_code=400, detail="Use either month or start_date/end_date, not both.")
+    _validate_date_range(start_date, end_date)
+    return get_team_manager_kpis(db, current_user, month=month, start_date=start_date, end_date=end_date)
 
 @router.post('/transfer-requests', response_model=AgentTransferRequestOut)
 def create_transfer_request(

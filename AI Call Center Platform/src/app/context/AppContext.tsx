@@ -44,6 +44,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           role: normalizedRole,
           permissions: data.permissions?.length ? data.permissions : getPermissionsForRole(normalizedRole),
           avatar: data.avatar || '',
+          qa_scope_team_id: data.qa_scope_team_id ?? null,
+          qa_scope_team_name: data.qa_scope_team_name ?? null,
+          qa_scope_campaign_id: data.qa_scope_campaign_id ?? null,
+          qa_scope_campaign_name: data.qa_scope_campaign_name ?? null,
           account_status: data.account_status || data.status || 'active',
         };
         setCurrentUser(normalizedUser);

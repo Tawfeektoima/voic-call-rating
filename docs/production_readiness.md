@@ -18,6 +18,8 @@ This document is the handoff checklist for deploying the Voice Call Rating Platf
 - `MAX_FILE_SIZE_MB`
 - `ALLOWED_EXTENSIONS`
 - `FRONTEND_URL`
+- `PUBLIC_BASE_URL` (required if interview invites must always resolve through a public host)
+- `INTERVIEW_PORTAL_PATH`
 
 ## Required Services
 
@@ -39,6 +41,13 @@ This document is the handoff checklist for deploying the Voice Call Rating Platf
 5. Build the frontend:
    `cd "AI Call Center Platform" && npm ci && npm run build`
 
+## Public Interview Access
+
+- Set `PUBLIC_BASE_URL` to the public frontend origin you expose through Cloudflare Tunnel or your production host.
+- Keep `INTERVIEW_PORTAL_PATH=/interview-portal` unless you intentionally move the public candidate route.
+- If interview invites must never fall back to localhost-style links, set `REQUIRE_PUBLIC_BASE_URL_FOR_INTERVIEWS=true`.
+- Optional startup verification: set `ENABLE_PUBLIC_BASE_URL_HEALTHCHECK=true` to log whether the public host is reachable when the API boots.
+
 ## Local Production-Like Commands
 
 - API:
@@ -48,6 +57,12 @@ This document is the handoff checklist for deploying the Voice Call Rating Platf
 - Backend verification:
   `python -m compileall app`
   `python -m pytest -q tests`
+
+## External Tunnel Testing
+
+- Use `start_public_tunnel.bat` for local external-access testing through Cloudflare Tunnel.
+- Keep `cloudflared.exe` in the project root before launching that script.
+- After the tunnel window prints the public `https://...trycloudflare.com` origin, set `PUBLIC_BASE_URL` to that value and restart the backend if HR-generated interview invites should use the public URL.
 
 ## Health Checks
 

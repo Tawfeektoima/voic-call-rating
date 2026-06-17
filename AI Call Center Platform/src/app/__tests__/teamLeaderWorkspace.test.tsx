@@ -148,6 +148,8 @@ describe('Team Leader workspace', () => {
     expect(html).toContain('Team Agents');
     expect(html).toContain('Team Calls');
     expect(html).toContain('Team KPIs');
+    expect(html).not.toContain('Agent Profiles');
+    expect(html).not.toContain('Dashboard');
   });
 
   it('renders the dashboard, agents, calls, and kpis pages from prefetched data', async () => {

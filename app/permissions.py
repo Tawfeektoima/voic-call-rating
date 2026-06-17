@@ -37,6 +37,12 @@ class Permission(str, enum.Enum):
     VIEW_TEAM_LEADER_WORKSPACE = "team_leader.workspace.view"
     VIEW_NOTES = "notes.view"
     MANAGE_KPI_THRESHOLDS = "kpi_thresholds.manage"
+    MANAGE_INTERVIEW_JOBS = "hr.interviews.jobs.manage"
+    VIEW_INTERVIEW_CANDIDATES = "hr.interviews.candidates.view"
+    MANAGE_INTERVIEW_CANDIDATES = "hr.interviews.candidates.manage"
+    REVIEW_INTERVIEW_EVALUATIONS = "hr.interviews.evaluations.review"
+    CONVERT_INTERVIEW_CANDIDATES = "hr.interviews.candidates.convert"
+    EXPORT_INTERVIEW_DATA = "hr.interviews.export"
 
 
 APPROVED_ROLE_ORDER: tuple[UserRole, ...] = (
@@ -108,6 +114,12 @@ ROLE_PERMISSIONS: dict[UserRole, frozenset[Permission]] = {
         Permission.MANAGE_EMPLOYEES,
         Permission.CHANGE_EMPLOYEE_ROLE,
         Permission.CHANGE_EMPLOYEE_STATUS,
+        Permission.MANAGE_INTERVIEW_JOBS,
+        Permission.VIEW_INTERVIEW_CANDIDATES,
+        Permission.MANAGE_INTERVIEW_CANDIDATES,
+        Permission.REVIEW_INTERVIEW_EVALUATIONS,
+        Permission.CONVERT_INTERVIEW_CANDIDATES,
+        Permission.EXPORT_INTERVIEW_DATA,
         Permission.VIEW_NOTES,
     }),
     UserRole.QA: frozenset({
