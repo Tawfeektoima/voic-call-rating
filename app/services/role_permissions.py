@@ -101,6 +101,10 @@ INTERVIEW_PERMISSION_KEYS: tuple[str, ...] = (
     "hr.interviews.export",
 )
 
+INGESTION_PERMISSION_KEYS: tuple[str, ...] = (
+    "calls.ingestion.manage",
+)
+
 
 def backfill_interview_role_permissions(db: Session) -> None:
     permissions_by_key = _ensure_permission_catalog(db)
@@ -108,6 +112,31 @@ def backfill_interview_role_permissions(db: Session) -> None:
     target_roles = {
         UserRole.HR_MANAGER: INTERVIEW_PERMISSION_KEYS,
         UserRole.ADMIN: INTERVIEW_PERMISSION_KEYS,
+    }
+    existing_pairs = {
+        (normalize_role_value(item.role), item.permission_id)
+        for item in db.query(RolePermission).all()
+    }
+
+    for role, permission_keys in target_roles.items():
+        for permission_key in permission_keys:
+            permission_row = permissions_by_key.get(permission_key)
+            if permission_row is None:
+                continue
+            pair = (normalize_role_value(role), permission_row.id)
+            if pair in existing_pairs:
+                continue
+            db.add(RolePermission(role=role, permission_id=permission_row.id))
+            existing_pairs.add(pair)
+
+    db.flush()
+
+
+def backfill_ingestion_role_permissions(db: Session) -> None:
+    permissions_by_key = _ensure_permission_catalog(db)
+
+    target_roles = {
+        UserRole.ADMIN: INGESTION_PERMISSION_KEYS,
     }
     existing_pairs = {
         (normalize_role_value(item.role), item.permission_id)

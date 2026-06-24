@@ -24,6 +24,7 @@ class Permission(str, enum.Enum):
     VIEW_DATA_CENTER = "data_center.view"
     VIEW_HR_DASHBOARD = "hr.dashboard.view"
     MANAGE_HR_ONBOARDING = "hr.onboarding.manage"
+    MANAGE_RECORDING_INGESTION = "calls.ingestion.manage"
     VIEW_EMPLOYEES = "employees.view"
     MANAGE_EMPLOYEES = "employees.manage"
     CHANGE_EMPLOYEE_ROLE = "employees.change_role"
@@ -243,6 +244,14 @@ def require_qa_review_access(current_user: Employee, detail: str = "Access denie
 def require_raw_export_access(current_user: Employee, detail: str = "Only admins, QA, and HR managers are authorized to export data.") -> None:
     """Helper to require that the current user is an ADMIN, QA, or HR_MANAGER."""
     require_permission(current_user, Permission.EXPORT_DATA, detail=detail)
+
+def can_manage_ingestion(current_user: Employee) -> bool:
+    """Returns True if the current user can manage ingestion runs or retries."""
+    return has_permission(current_user, Permission.MANAGE_RECORDING_INGESTION)
+
+def require_ingestion_management_access(current_user: Employee, detail: str = "Only admins can manage recording ingestion.") -> None:
+    """Helper to require that the current user is an ADMIN with ingestion-management access."""
+    require_permission(current_user, Permission.MANAGE_RECORDING_INGESTION, detail=detail)
 
 def can_view_global_reports(current_user: Employee) -> bool:
     """Returns True if the current user has rights to view global reporting (ADMIN, QA, HR_MANAGER, OPS_MANAGER)."""

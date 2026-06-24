@@ -1108,3 +1108,79 @@ export interface AgentTransferRequestCreate {
   to_team_id?: number | null;
   reason: string;
 }
+
+export interface UserLogin {
+  employee_code?: string;
+  email?: string;
+  password?: string;
+  device_id?: string;
+}
+
+export interface UserOtpVerify {
+  challenge_id: number;
+  otp_code: string;
+  device_id?: string;
+}
+
+export interface SecurityShift {
+  id: number;
+  employee_id: string;
+  work_date: string;
+  starts_at: string;
+  ends_at: string;
+  status: string;
+}
+
+export interface SecuritySession {
+  id: number;
+  employee_id: string;
+  created_at: string;
+  expires_at: string;
+  revoked_at?: string | null;
+  is_active: boolean;
+  last_seen_at?: string | null;
+}
+
+export interface TrustedDevice {
+  id: number;
+  employee_id: string;
+  label?: string | null;
+  is_trusted: boolean;
+  revoked_at?: string | null;
+  last_seen_at?: string | null;
+  fingerprint?: string | null;
+}
+
+export interface SecuritySummary {
+  audit_policy_violations: number;
+  enforced_policy_denials: number;
+  denied_logins: number;
+  denied_protected_requests: number;
+  revoked_sessions: number;
+  revoked_devices: number;
+  cancelled_shifts: number;
+  websocket_security_closes: number;
+}
+
+export interface SecurityAuditEvent {
+  id: number;
+  actor_id?: number | null;
+  actor_email?: string | null;
+  action: string;
+  target?: string | null;
+  subject_employee_id?: number | null;
+  summary?: string | null;
+  details?: string | null;
+  reason?: string | null;
+  success: boolean;
+  created_at: string;
+}
+
+export interface SecurityAuditFeed {
+  hours: number;
+  limit: number;
+  offset: number;
+  total: number;
+  items: SecurityAuditEvent[];
+}
+

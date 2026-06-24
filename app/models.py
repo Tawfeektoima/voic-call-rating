@@ -12,12 +12,15 @@ import enum
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Column, Integer, String, Float, Text, DateTime, Date,
-    ForeignKey, Enum as SAEnum, JSON, Boolean, Index, UniqueConstraint,
+    Column, Integer, String, Float, Text, DateTime, Date, Time,
+    ForeignKey, Enum as SAEnum, JSON, Boolean, Index, UniqueConstraint, text,
 )
 from sqlalchemy.orm import relationship
 
 from app.database import Base
+
+def utcnow():
+    return datetime.now(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +90,71 @@ class EmployeeStatus(str, enum.Enum):
     ACTIVE    = "active"
     DISABLED  = "disabled"
     SUSPENDED = "suspended"
+
+
+def _recording_ingestion_enum(enum_cls: type[enum.Enum], *, name: str) -> SAEnum:
+    return SAEnum(
+        enum_cls,
+        name=name,
+        values_callable=lambda members: [member.value for member in members],
+        validate_strings=True,
+    )
+
+
+class RecordingIngestionRunTrigger(str, enum.Enum):
+    SCHEDULED = "scheduled"
+    MANUAL = "manual"
+    RETRY = "retry"
+    RECONCILIATION = "reconciliation"
+
+
+class RecordingIngestionRunStatus(str, enum.Enum):
+    REQUESTED = "requested"
+    READING_SOURCE = "reading_source"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    COMPLETED_WITH_ERRORS = "completed_with_errors"
+    FAILED = "failed"
+
+
+class RecordingIngestionRecordStatus(str, enum.Enum):
+    PENDING = "pending"
+    DOWNLOADING = "downloading"
+    QUARANTINED = "quarantined"
+    INSPECTING = "inspecting"
+    ACCEPTED = "accepted"
+    HANDOFF_PENDING = "handoff_pending"
+    SUBMITTED = "submitted"
+    DUPLICATE = "duplicate"
+    FAILED = "failed"
+    RETRY_SCHEDULED = "retry_scheduled"
+    REQUIRES_REVIEW = "requires_review"
+    REJECTED = "rejected"
+
+
+class RecordingIngestionInspectionStatus(str, enum.Enum):
+    PENDING = "pending"
+    PASSED = "passed"
+    REJECTED = "rejected"
+    UNAVAILABLE = "unavailable"
+
+
+class RecordingIngestionAttemptPhase(str, enum.Enum):
+    VALIDATION = "validation"
+    DOWNLOAD = "download"
+    SIGNATURE_CHECK = "signature_check"
+    MALWARE_SCAN = "malware_scan"
+    MEDIA_VERIFICATION = "media_verification"
+    STORAGE = "storage"
+    HANDOFF = "handoff"
+
+
+class RecordingIngestionAttemptStatus(str, enum.Enum):
+    STARTED = "started"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    SKIPPED_DUPLICATE = "skipped_duplicate"
+    RETRY_SCHEDULED = "retry_scheduled"
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +239,7 @@ class LoginOtpChallenge(Base):
     used_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     ip_address = Column(String(64), nullable=True)
+    device_id_hash = Column(String(128), nullable=True, index=True)
 
     employee = relationship("Employee", back_populates="login_otp_challenges")
 
@@ -271,6 +340,7 @@ class Call(Base):
     qa_pairs = relationship("CallQAPair", back_populates="call", cascade="all, delete-orphan")
     annotations = relationship("CallAnnotation", back_populates="call", cascade="all, delete-orphan")
     violations = relationship("AgentViolation", back_populates="call", cascade="all, delete-orphan")
+    ingestion_record = relationship("RecordingIngestionRecord", back_populates="call", uselist=False)
 
     def __repr__(self):
         return f"<Call id={self.id} status={self.status.value}>"
@@ -305,6 +375,188 @@ class CallOutcome(Base):
 
     def __repr__(self):
         return f"<CallOutcome id={self.id} call_id={self.call_id} type={self.campaign_type}>"
+
+
+class RecordingIngestionRun(Base):
+    __tablename__ = "recording_ingestion_runs"
+    __table_args__ = (
+        Index("ix_recording_ingestion_runs_source_status", "source_name", "status"),
+        Index("ix_recording_ingestion_runs_source_started_at", "source_name", "started_at"),
+        Index(
+            "uq_recording_ingestion_runs_active_source",
+            "source_name",
+            unique=True,
+            postgresql_where=text("status IN ('requested', 'reading_source', 'processing')"),
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    source_name = Column(String(100), nullable=False, default="vicdi_tests", index=True)
+    trigger = Column(
+        _recording_ingestion_enum(RecordingIngestionRunTrigger, name="recordingingestionruntrigger"),
+        nullable=False,
+        index=True,
+    )
+    status = Column(
+        _recording_ingestion_enum(RecordingIngestionRunStatus, name="recordingingestionrunstatus"),
+        nullable=False,
+        default=RecordingIngestionRunStatus.REQUESTED,
+        index=True,
+    )
+    requested_by_employee_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    started_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    rows_seen = Column(Integer, nullable=False, default=0)
+    new_count = Column(Integer, nullable=False, default=0)
+    duplicate_count = Column(Integer, nullable=False, default=0)
+    success_count = Column(Integer, nullable=False, default=0)
+    failed_count = Column(Integer, nullable=False, default=0)
+    retryable_count = Column(Integer, nullable=False, default=0)
+    failure_summary = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+
+    requested_by = relationship("Employee", foreign_keys=[requested_by_employee_id])
+    attempts = relationship("RecordingIngestionAttempt", back_populates="ingestion_run", cascade="all, delete-orphan")
+    records = relationship("RecordingIngestionRecord", back_populates="ingestion_run")
+
+
+class RecordingIngestionRecord(Base):
+    __tablename__ = "recording_ingestion_records"
+    __table_args__ = (
+        UniqueConstraint("source_name", "source_key", name="uq_recording_ingestion_records_source_key"),
+        Index("ix_recording_ingestion_records_source_status_retry", "source_name", "status", "next_retry_at"),
+        Index("ix_recording_ingestion_records_employee_id", "employee_id"),
+        Index("ix_recording_ingestion_records_call_id", "call_id"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    ingestion_run_id = Column(Integer, ForeignKey("recording_ingestion_runs.id"), nullable=False, index=True)
+    source_name = Column(String(100), nullable=False, default="vicdi_tests", index=True)
+    source_key = Column(String(255), nullable=False, index=True)
+    source_row_number = Column(Integer, nullable=False, index=True)
+    source_payload = Column(JSON, nullable=False)
+    recording_url = Column(Text, nullable=False)
+    recording_url_fingerprint = Column(String(128), nullable=False, index=True)
+    source_call_date = Column(Date, nullable=True, index=True)
+    source_score = Column(Float, nullable=True)
+    source_quality_notes = Column(Text, nullable=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=True)
+    status = Column(
+        _recording_ingestion_enum(RecordingIngestionRecordStatus, name="recordingingestionrecordstatus"),
+        nullable=False,
+        default=RecordingIngestionRecordStatus.PENDING,
+        index=True,
+    )
+    attempt_count = Column(Integer, nullable=False, default=0)
+    next_retry_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    quarantine_file_path = Column(String(500), nullable=True)
+    stored_file_path = Column(String(500), nullable=True)
+    content_type = Column(String(100), nullable=True)
+    byte_size = Column(Integer, nullable=True)
+    file_sha256 = Column(String(128), nullable=True, index=True)
+    signature_status = Column(
+        _recording_ingestion_enum(RecordingIngestionInspectionStatus, name="recordingingestioninspectionstatus"),
+        nullable=False,
+        default=RecordingIngestionInspectionStatus.PENDING,
+        index=True,
+    )
+    malware_scan_status = Column(
+        _recording_ingestion_enum(RecordingIngestionInspectionStatus, name="recordingingestioninspectionstatus"),
+        nullable=False,
+        default=RecordingIngestionInspectionStatus.PENDING,
+        index=True,
+    )
+    media_verification_status = Column(
+        _recording_ingestion_enum(RecordingIngestionInspectionStatus, name="recordingingestioninspectionstatus"),
+        nullable=False,
+        default=RecordingIngestionInspectionStatus.PENDING,
+        index=True,
+    )
+    scanner_name = Column(String(100), nullable=True)
+    scanner_version = Column(String(100), nullable=True)
+    inspection_completed_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    call_id = Column(Integer, ForeignKey("calls.id"), nullable=True, unique=True)
+    pipeline_queued_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    last_error_category = Column(String(100), nullable=True)
+    last_error_detail = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True, index=True)
+
+    ingestion_run = relationship("RecordingIngestionRun", back_populates="records")
+    employee = relationship("Employee", foreign_keys=[employee_id])
+    campaign = relationship("Campaign", foreign_keys=[campaign_id])
+    call = relationship("Call", back_populates="ingestion_record")
+    attempts = relationship("RecordingIngestionAttempt", back_populates="ingestion_record", cascade="all, delete-orphan")
+
+    @property
+    def source_reference(self) -> str | None:
+        payload = self.source_payload or {}
+        crdts = payload.get("CRDTS")
+        if isinstance(crdts, str) and crdts.strip():
+            return crdts.strip()
+        return self.source_key
+
+    @property
+    def agent_code(self) -> str | None:
+        payload = self.source_payload or {}
+        source_code = payload.get("CODE")
+        if isinstance(source_code, str) and source_code.strip():
+            return source_code.strip()
+        if self.employee is not None and getattr(self.employee, "employee_code", None):
+            return str(self.employee.employee_code).strip() or None
+        return None
+
+    @property
+    def agent_name(self) -> str | None:
+        payload = self.source_payload or {}
+        source_name = payload.get("NAME")
+        if isinstance(source_name, str) and source_name.strip():
+            return source_name.strip()
+        if self.employee is not None and getattr(self.employee, "name", None):
+            return str(self.employee.name).strip() or None
+        return None
+
+
+class RecordingIngestionAttempt(Base):
+    __tablename__ = "recording_ingestion_attempts"
+    __table_args__ = (
+        UniqueConstraint(
+            "ingestion_record_id",
+            "attempt_number",
+            "phase",
+            name="uq_recording_ingestion_attempts_record_attempt_phase",
+        ),
+        Index("ix_recording_ingestion_attempts_run_id", "ingestion_run_id"),
+        Index("ix_recording_ingestion_attempts_record_id", "ingestion_record_id"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    ingestion_record_id = Column(Integer, ForeignKey("recording_ingestion_records.id"), nullable=False)
+    ingestion_run_id = Column(Integer, ForeignKey("recording_ingestion_runs.id"), nullable=False)
+    attempt_number = Column(Integer, nullable=False)
+    phase = Column(
+        _recording_ingestion_enum(RecordingIngestionAttemptPhase, name="recordingingestionattemptphase"),
+        nullable=False,
+        index=True,
+    )
+    status = Column(
+        _recording_ingestion_enum(RecordingIngestionAttemptStatus, name="recordingingestionattemptstatus"),
+        nullable=False,
+        default=RecordingIngestionAttemptStatus.STARTED,
+        index=True,
+    )
+    error_category = Column(String(100), nullable=True)
+    error_detail = Column(Text, nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), index=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    http_status = Column(Integer, nullable=True)
+    bytes_downloaded = Column(Integer, nullable=True)
+
+    ingestion_record = relationship("RecordingIngestionRecord", back_populates="attempts")
+    ingestion_run = relationship("RecordingIngestionRun", back_populates="attempts")
 
 
 class CallQAPair(Base):
@@ -991,5 +1243,83 @@ class InterviewWorkflowEvent(Base):
 
     candidate = relationship("InterviewCandidate", back_populates="workflow_events")
     actor = relationship("Employee", foreign_keys=[actor_id])
+
+
+class EmployeeShift(Base):
+    __tablename__ = "employee_shifts"
+    __table_args__ = (
+        UniqueConstraint("employee_id", "work_date", name="uq_employee_shift_date"),
+        Index("ix_employee_shifts_employee_id_work_date", "employee_id", "work_date"),
+        Index("ix_employee_shifts_status_work_date", "status", "work_date"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    work_date = Column(Date, nullable=False, index=True)
+    shift_start = Column(Time, nullable=True)
+    shift_end = Column(Time, nullable=True)
+    grace_before_minutes = Column(Integer, nullable=False, default=10)
+    grace_after_minutes = Column(Integer, nullable=False, default=10)
+    status = Column(String(50), nullable=False, default="scheduled", index=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+    employee = relationship("Employee", foreign_keys=[employee_id])
+
+
+class TrustedDevice(Base):
+    __tablename__ = "trusted_devices"
+    __table_args__ = (
+        UniqueConstraint("employee_id", "device_id_hash", name="uq_trusted_device_employee_device"),
+        Index("ix_trusted_devices_employee_id_is_trusted", "employee_id", "is_trusted"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    device_id_hash = Column(String(128), nullable=False, index=True)
+    device_fingerprint_hash = Column(String(128), nullable=True)
+    user_agent_hash = Column(String(128), nullable=True)
+    device_label = Column(String(255), nullable=True)
+    first_seen_at = Column(DateTime(timezone=True), nullable=False)
+    last_seen_at = Column(DateTime(timezone=True), nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    approved_by_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    revoke_reason = Column(Text, nullable=True)
+    is_trusted = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+    employee = relationship("Employee", foreign_keys=[employee_id])
+    approved_by = relationship("Employee", foreign_keys=[approved_by_id])
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+    __table_args__ = (
+        Index("ix_user_sessions_employee_id_is_active", "employee_id", "is_active"),
+        Index("ix_user_sessions_employee_device_active", "employee_id", "device_id_hash", "is_active"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    trusted_device_id = Column(Integer, ForeignKey("trusted_devices.id"), nullable=True, index=True)
+    sid = Column(String(64), nullable=False, unique=True, index=True)
+    jti = Column(String(64), nullable=False, unique=True, index=True)
+    device_id_hash = Column(String(128), nullable=False, index=True)
+    device_fingerprint_hash = Column(String(128), nullable=True)
+    user_agent_hash = Column(String(128), nullable=True)
+    ip_address = Column(String(64), nullable=True)
+    issued_at = Column(DateTime(timezone=True), nullable=False)
+    last_seen_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    revoke_reason = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+    employee = relationship("Employee", foreign_keys=[employee_id])
+    trusted_device = relationship("TrustedDevice", foreign_keys=[trusted_device_id])
 
 

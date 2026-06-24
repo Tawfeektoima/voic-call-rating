@@ -1,0 +1,5 @@
+DATE,CODE,CRDTS,NAME,CALL LINK,SCORE,WEAKNESS,QUALITY FEEDBACK
+2026-05-04,489,67191,Agent One,https://archive.dial-fusion.com/archive/20260504_15030300m45s_5209776179_NoCallerOnLine_Agent17.mp3,91,Follow up,Clear and complete
+2026-05-04,489,67191,Agent One,https://archive.dial-fusion.com/archive/20260504_15030300m45s_5209776179_NoCallerOnLine_Agent17.mp3,91,Follow up,Duplicate source row
+2026-05-04,490,67192,Agent Two,,88,Missing call link,Invalid source row
+2026-05-04,491,67193,Agent Three,https://unapproved.example.com/missing.mp3,75,Unapproved host,Should be rejected

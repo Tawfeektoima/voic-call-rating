@@ -31,11 +31,11 @@ if os.path.exists(scripts_path) and scripts_path not in os.environ["PATH"]:
 load_dotenv()
 
 from app.database import engine, Base, SessionLocal
-from app.routers import audio, analytics, admin, auth, system, export, hr, websocket_router, live, review, notes, interviews, interview_portal
+from app.routers import audio, analytics, admin, auth, system, export, hr, websocket_router, live, review, notes, interviews, interview_portal, recording_ingestion, security_admin
 from app.recovery import recover_stuck_tasks
 from app.services.public_links import get_additional_allowed_origins, probe_public_base_url, validate_public_url_settings
 from app.services.websocket import manager
-from app.config import get_settings
+from app.config import get_settings, validate_recording_ingestion_runtime_startup
 
 
 def _load_optional_router(module_name: str):
@@ -117,6 +117,7 @@ async def configure_redis_limits():
 async def lifespan(app: FastAPI):
     # Startup checks (TASK-C05)
     settings = get_settings()
+    validate_recording_ingestion_runtime_startup(settings)
     public_url_errors = validate_public_url_settings(settings)
     if public_url_errors:
         raise RuntimeError("Public URL configuration error: " + " | ".join(public_url_errors))
@@ -127,12 +128,14 @@ async def lifespan(app: FastAPI):
         from app.services.interview_security_backfill import backfill_interview_document_security
 
         if settings.ENVIRONMENT.lower() != "production":
-            from app.services.role_permissions import backfill_interview_role_permissions, seed_role_permissions
+            from app.services.role_permissions import backfill_ingestion_role_permissions, backfill_interview_role_permissions, seed_role_permissions
             seed_role_permissions(db)
             backfill_interview_role_permissions(db)
+            backfill_ingestion_role_permissions(db)
         else:
-            from app.services.role_permissions import backfill_interview_role_permissions
+            from app.services.role_permissions import backfill_ingestion_role_permissions, backfill_interview_role_permissions
             backfill_interview_role_permissions(db)
+            backfill_ingestion_role_permissions(db)
         security_backfill = backfill_interview_document_security(db)
         db.commit()
         if security_backfill.encrypted_files or security_backfill.encrypted_text_rows:
@@ -216,6 +219,8 @@ app.include_router(notes.router)
 app.include_router(websocket_router.router)
 app.include_router(live.router)
 app.include_router(review.router)
+app.include_router(recording_ingestion.router)
+app.include_router(security_admin.router)
 for router in OPTIONAL_ROUTERS:
     if router is not None:
         app.include_router(router)

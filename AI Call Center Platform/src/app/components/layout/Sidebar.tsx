@@ -39,6 +39,7 @@ const navItems: NavItemConfig[] = [
   { path: '/team-manager',   label: 'Manager Workspace',                          icon: Users,             permission: PERMISSIONS.VIEW_TEAM_MANAGER_WORKSPACE },
   { path: '/notes',          label: 'Workflow Notes',  agentLabel: 'My Notes',    icon: Inbox,             permission: PERMISSIONS.VIEW_NOTES },
   { path: '/system-health',  label: 'System Health',                              icon: Activity,          permission: PERMISSIONS.VIEW_SYSTEM_HEALTH },
+  { path: '/admin/security', label: 'Security Admin',                             icon: Shield,            roles: [UserRole.ADMIN] },
 ];
 
 export function Sidebar() {
@@ -53,6 +54,9 @@ export function Sidebar() {
   const visibleItems = navItems.filter((item) => {
     if (item.roles && !item.roles.includes(userRole)) {
       return false;
+    }
+    if (!item.permission && !item.anyPermissions) {
+      return true;
     }
     if (item.permission) {
       return hasPermission(userRole, item.permission, currentUser?.permissions);

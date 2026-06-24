@@ -5,11 +5,86 @@ Pydantic schemas for request/response validation and the Groq structured output.
 from __future__ import annotations
 
 from datetime import datetime, date
+import re
 from typing import Optional, List
 
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 import json
+from app.models import (
+    RecordingIngestionAttemptPhase,
+    RecordingIngestionAttemptStatus,
+    RecordingIngestionInspectionStatus,
+    RecordingIngestionRecordStatus,
+    RecordingIngestionRunStatus,
+    RecordingIngestionRunTrigger,
+)
 from app.security import validate_password_strength
+
+
+SENSITIVE_URL_PATTERN = re.compile(r"https?://\S+", re.IGNORECASE)
+SENSITIVE_WINDOWS_PATH_PATTERN = re.compile(r"[A-Za-z]:\\(?:[^\\/:*?\"<>|\r\n]+\\)*[^\\/:*?\"<>|\r\n]*")
+SENSITIVE_UNIX_PATH_PATTERN = re.compile(r"(?:^|[\s(])(/[^)\s]+)")
+SENSITIVE_SECRET_PATTERN = re.compile(r"(?i)\b(token|secret|password|api[_-]?key)\s*[:=]\s*\S+")
+SAFE_INGESTION_ERROR_CATEGORY_PATTERN = re.compile(r"^[a-z0-9_]{1,100}$")
+UNTRUSTED_CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
+UNTRUSTED_WHITESPACE_PATTERN = re.compile(r"\s+")
+
+
+def _sanitize_ingestion_text(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+
+    sanitized = value.strip()
+    if not sanitized:
+        return None
+
+    sanitized = SENSITIVE_SECRET_PATTERN.sub(lambda match: f"{match.group(1)}=[redacted]", sanitized)
+    sanitized = SENSITIVE_URL_PATTERN.sub("[redacted-url]", sanitized)
+    sanitized = SENSITIVE_WINDOWS_PATH_PATTERN.sub("[redacted-path]", sanitized)
+    sanitized = SENSITIVE_UNIX_PATH_PATTERN.sub(
+        lambda match: match.group(0).replace(match.group(1), "[redacted-path]"),
+        sanitized,
+    )
+    return sanitized
+
+
+def _safe_ingestion_error_category(value: Optional[str]) -> Optional[str]:
+    """Return only a stable internal error identifier to API clients."""
+    if value is None:
+        return None
+    category = str(value).strip().lower()
+    if not category:
+        return None
+    if SAFE_INGESTION_ERROR_CATEGORY_PATTERN.fullmatch(category):
+        return category
+    return "unclassified_error"
+
+
+def _sanitize_untrusted_text(value: Optional[str], fallback: str = "") -> str:
+    if value is None:
+        return fallback
+
+    text = str(value).replace("\ufeff", "").replace("\u200b", "")
+    text = UNTRUSTED_CONTROL_CHAR_PATTERN.sub(" ", text)
+    text = UNTRUSTED_WHITESPACE_PATTERN.sub(" ", text).strip()
+    return text or fallback
+
+
+def _sanitize_json_like(value, *, max_depth: int = 4, field_name: str = "value"):
+    if max_depth < 0:
+        raise ValueError(f"{field_name} is nested too deeply.")
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return _sanitize_untrusted_text(value)
+    if isinstance(value, list):
+        return [_sanitize_json_like(item, max_depth=max_depth - 1, field_name=field_name) for item in value]
+    if isinstance(value, dict):
+        return {
+            _sanitize_untrusted_text(str(key), fallback="key"): _sanitize_json_like(item, max_depth=max_depth - 1, field_name=field_name)
+            for key, item in value.items()
+        }
+    raise ValueError(f"{field_name} must be JSON-like data.")
 
 
 # ===========================
@@ -174,10 +249,18 @@ class UserRegister(BaseModel):
         validate_password_strength(value)
         return value
 
+def _normalize_optional_device_id(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
 class UserLogin(BaseModel):
     employee_code: Optional[str] = None
     email: Optional[str] = None
     password: str
+    device_id: Optional[str] = Field(None, min_length=8, max_length=255)
 
     @model_validator(mode="after")
     def identifier_required(self):
@@ -185,10 +268,34 @@ class UserLogin(BaseModel):
             raise ValueError("Employee code is required.")
         return self
 
+    @field_validator("device_id", mode="before")
+    @classmethod
+    def normalize_device_id(cls, v: Optional[str]) -> Optional[str]:
+        return _normalize_optional_device_id(v)
+
 
 class UserOtpVerify(BaseModel):
     challenge_id: int
     otp_code: str = Field(..., min_length=4, max_length=10)
+    device_id: Optional[str] = Field(None, min_length=8, max_length=255)
+
+    @field_validator("device_id", mode="before")
+    @classmethod
+    def normalize_device_id(cls, v: Optional[str]) -> Optional[str]:
+        return _normalize_optional_device_id(v)
+
+
+class LoginSessionOut(BaseModel):
+    session_id: Optional[int] = None
+    device_trusted: Optional[bool] = None
+    policy_mode: Optional[str] = None
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: dict
+    session: Optional[LoginSessionOut] = None
 
 
 class PasswordResetRequest(BaseModel):
@@ -738,26 +845,47 @@ class CampaignOut(BaseModel):
 
 class QAPairItem(BaseModel):
     """Objection/Response pair for RAG (Task 65)."""
+    model_config = ConfigDict(extra="forbid")
+
     objection: str = Field(..., description="The customer objection or critical question")
     response: str = Field(..., description="The agent's response to the objection")
     customer_emotion_at: str = Field(default="neutral", description="Customer emotion during the objection")
     customer_emotion_after: str = Field(default="neutral", description="Customer emotion after the agent's response")
     is_golden: bool = Field(default=False, description="Whether this response is considered an ideal 'Golden' response")
 
+    @field_validator("objection", "response", "customer_emotion_at", "customer_emotion_after", mode="before")
+    @classmethod
+    def sanitize_fields(cls, value):
+        return _sanitize_untrusted_text(value)
+
 
 class StrengthItem(BaseModel):
     """Schema for individual identified strengths in a call."""
+    model_config = ConfigDict(extra="forbid")
+
     issue: str = Field(..., description="Short category label for the strength")
     detail: str = Field(default="", description="Explanation of the positive behavior")
+
+    @field_validator("issue", "detail", mode="before")
+    @classmethod
+    def sanitize_fields(cls, value):
+        return _sanitize_untrusted_text(value)
 
 
 class WeaknessItem(BaseModel):
     """Schema for individual identified weaknesses in a call."""
+    model_config = ConfigDict(extra="forbid")
+
     issue: str = Field(..., description="Short category label for the weakness")
     detail: str = Field(..., description="Explanation of what was wrong")
     deduction: float = Field(..., description="Points deducted for this weakness")
     score: Optional[float] = Field(default=None, description="Points earned in this category")
     max: Optional[int] = Field(default=None, description="Maximum possible points for this category")
+
+    @field_validator("issue", "detail", mode="before")
+    @classmethod
+    def sanitize_fields(cls, value):
+        return _sanitize_untrusted_text(value)
 
 
 class EvaluationResult(BaseModel):
@@ -765,6 +893,8 @@ class EvaluationResult(BaseModel):
     Strict schema that Groq must return.
     This is used both as the prompt instruction AND as the validation model.
     """
+    model_config = ConfigDict(extra="forbid")
+
     reasoning: str = Field(..., description="Detailed step-by-step reasoning for the evaluation and scoring")
     score: float = Field(..., ge=0, le=100, description="Overall call score from 0 to 100")
     strengths: List[StrengthItem] = Field(default_factory=list, description="List of positive behaviors found in the call")
@@ -812,6 +942,31 @@ class EvaluationResult(BaseModel):
             return new_v
         return v
 
+    @field_validator("reasoning", "summary", "primary_outcome", "follow_up_date", mode="before")
+    @classmethod
+    def sanitize_text_fields(cls, value):
+        if value is None:
+            return None
+        return _sanitize_untrusted_text(value)
+
+    @field_validator("campaign_specific_data", "raw_sales_data", mode="before")
+    @classmethod
+    def sanitize_dict_fields(cls, value, info):
+        if value is None:
+            return None
+        sanitized = _sanitize_json_like(value, field_name=info.field_name)
+        if not isinstance(sanitized, dict):
+            raise ValueError(f"{info.field_name} must be an object.")
+        return sanitized
+
+    @field_validator("raw_violations", mode="before")
+    @classmethod
+    def sanitize_violations(cls, value):
+        sanitized = _sanitize_json_like(value if value is not None else [], field_name="raw_violations")
+        if not isinstance(sanitized, list):
+            raise ValueError("raw_violations must be a list.")
+        return sanitized
+
 
 EvaluationResult.model_rebuild()
 
@@ -821,6 +976,8 @@ EvaluationResult.model_rebuild()
 # ===========================
 
 class TranscriptSegmentSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     start: float
     end: float
@@ -828,6 +985,12 @@ class TranscriptSegmentSchema(BaseModel):
     text: str
     emotion: Optional[str] = "calm"
     needs_review: bool = False
+
+    @field_validator("id", "speaker", "text", "emotion", mode="before")
+    @classmethod
+    def sanitize_text_fields(cls, value, info):
+        fallback = "calm" if info.field_name == "emotion" else ""
+        return _sanitize_untrusted_text(value, fallback=fallback)
 
 class CallOutcomeOut(BaseModel):
     """Serialization schema for CallOutcome records."""
@@ -921,6 +1084,152 @@ class CallUploadResponse(BaseModel):
     message: str = "Audio uploaded successfully. Processing has started in the background."
 
 
+class RecordingIngestionInspectionStatusOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    file_sha256: Optional[str] = None
+    byte_size: Optional[int] = None
+    content_type: Optional[str] = None
+    signature_status: RecordingIngestionInspectionStatus = RecordingIngestionInspectionStatus.PENDING
+    malware_scan_status: RecordingIngestionInspectionStatus = RecordingIngestionInspectionStatus.PENDING
+    media_verification_status: RecordingIngestionInspectionStatus = RecordingIngestionInspectionStatus.PENDING
+    scanner_name: Optional[str] = None
+    scanner_version: Optional[str] = None
+    inspection_completed_at: Optional[datetime] = None
+
+    @field_validator("signature_status", "malware_scan_status", "media_verification_status", mode="before")
+    @classmethod
+    def default_missing_inspection_status(
+        cls,
+        value: Optional[RecordingIngestionInspectionStatus],
+    ) -> RecordingIngestionInspectionStatus:
+        return value or RecordingIngestionInspectionStatus.PENDING
+
+
+class RecordingIngestionRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    source_name: str
+    trigger: RecordingIngestionRunTrigger
+    status: RecordingIngestionRunStatus
+    rows_seen: int
+    new_count: int
+    duplicate_count: int
+    success_count: int
+    failed_count: int
+    retryable_count: int
+    failure_summary: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    created_at: datetime
+
+    @field_validator("failure_summary", mode="before")
+    @classmethod
+    def sanitize_run_failure_summary(cls, value: Optional[str]) -> Optional[str]:
+        return _sanitize_ingestion_text(value)
+
+
+class RecordingIngestionRecordOut(RecordingIngestionInspectionStatusOut):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    source_row_number: int
+    source_reference: Optional[str] = None
+    recording_url_fingerprint: str
+    agent_code: Optional[str] = None
+    agent_name: Optional[str] = None
+    source_call_date: Optional[date] = None
+    source_score: Optional[float] = None
+    source_quality_notes: Optional[str] = None
+    status: RecordingIngestionRecordStatus
+    attempt_count: int
+    call_id: Optional[int] = None
+    error_category: Optional[str] = Field(default=None, validation_alias="last_error_category")
+    error_detail: Optional[str] = Field(default=None, validation_alias="last_error_detail")
+    next_retry_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    created_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_safe_source_reference(cls, value):
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        if normalized.get("source_reference"):
+            return normalized
+        payload = normalized.get("source_payload") or {}
+        crdts = payload.get("CRDTS") if isinstance(payload, dict) else None
+        if isinstance(crdts, str) and crdts.strip():
+            normalized["source_reference"] = crdts.strip()
+        elif normalized.get("source_key"):
+            normalized["source_reference"] = normalized.get("source_key")
+        return normalized
+
+    @field_validator("error_category", mode="before")
+    @classmethod
+    def sanitize_ingestion_error_category(cls, value: Optional[str]) -> Optional[str]:
+        return _safe_ingestion_error_category(value)
+
+    @field_validator("source_quality_notes", "error_detail", mode="before")
+    @classmethod
+    def sanitize_ingestion_text_fields(cls, value: Optional[str]) -> Optional[str]:
+        return _sanitize_ingestion_text(value)
+
+
+class RecordingIngestionAttemptOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    ingestion_record_id: int
+    ingestion_run_id: int
+    attempt_number: int
+    phase: RecordingIngestionAttemptPhase
+    status: RecordingIngestionAttemptStatus
+    error_category: Optional[str] = None
+    error_detail: Optional[str] = None
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+    http_status: Optional[int] = None
+    bytes_downloaded: Optional[int] = None
+
+    @field_validator("error_category", mode="before")
+    @classmethod
+    def sanitize_attempt_error_category(cls, value: Optional[str]) -> Optional[str]:
+        return _safe_ingestion_error_category(value)
+
+    @field_validator("error_detail", mode="before")
+    @classmethod
+    def sanitize_attempt_error_detail(cls, value: Optional[str]) -> Optional[str]:
+        return _sanitize_ingestion_text(value)
+
+
+class RecordingIngestionRetryRequest(BaseModel):
+    reason: Optional[str] = Field(default=None, max_length=500)
+
+
+class RecordingIngestionRetryOut(RecordingIngestionRecordOut):
+    retry_requested_at: Optional[datetime] = None
+
+
+class RecordingIngestionRunListOut(BaseModel):
+    items: List[RecordingIngestionRunOut] = Field(default_factory=list)
+
+
+class RecordingIngestionRunDetailOut(BaseModel):
+    run: RecordingIngestionRunOut
+    records: List[RecordingIngestionRecordOut] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
+
+
+class RecordingIngestionAccessOut(BaseModel):
+    can_manage: bool
+    permission: str = "calls.ingestion.manage"
+
+
 class ScoreOverview(BaseModel):
     average_score: float
     total_calls: int
@@ -994,6 +1303,8 @@ class SystemMetrics(BaseModel):
 
 
 class SystemLogOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     call_id: Optional[int] = None
     error_type: str
@@ -1001,9 +1312,6 @@ class SystemLogOut(BaseModel):
     severity: Optional[str] = "info"
     resolved: Optional[bool] = False
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 class Alert(SystemLogOut):
     pass
@@ -1099,6 +1407,8 @@ class SessionStartResponse(BaseModel):
 # ===========================
 
 class AgentViolationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     call_id: int
     violation_id: str
@@ -1119,9 +1429,6 @@ class AgentViolationOut(BaseModel):
     evidence: Optional[str]
     timestamp_in_call: Optional[str]
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 class AgentViolationHistory(BaseModel):
     employee_id: int

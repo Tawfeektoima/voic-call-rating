@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { BadgeCheck, ChevronRight, IdCard, KeyRound, Layout, Loader2, Lock, Mail, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
@@ -7,6 +7,8 @@ import { useApp } from '../context/AppContext';
 import { getApiBaseUrl } from '../lib/network';
 import { UserRole } from '../lib/types';
 import { getPermissionsForRole } from '../lib/roles';
+import { getOrCreateDeviceId } from '../lib/deviceIdentity';
+import { getApiErrorMessage } from '../lib/api';
 
 export function Login() {
   const navigate = useNavigate();
@@ -20,6 +22,7 @@ export function Login() {
     challenge_id: number;
     destination: string;
     dev_otp_code?: string;
+    device_id?: string;
   } | null>(null);
   const [resetChallenge, setResetChallenge] = useState<{
     challenge_id: number;
@@ -33,6 +36,16 @@ export function Login() {
     new_password: ''
   });
   const [otpCode, setOtpCode] = useState('');
+  const [logoutReason, setLogoutReason] = useState<string | null>(null);
+
+  useEffect(() => {
+    const reason = sessionStorage.getItem('forced_logout_reason');
+    if (reason) {
+      setLogoutReason(reason);
+      toast.error(reason, { id: 'forced-logout-toast' });
+      sessionStorage.removeItem('forced_logout_reason');
+    }
+  }, []);
 
   const getPostLoginRoute = (role: string) => {
     if (role === 'team_manager') return '/team-manager';
@@ -45,13 +58,18 @@ export function Login() {
     setLoading(true);
 
     try {
-      const response = await axios.post(`${getApiBaseUrl()}/api/auth/login`, formData);
+      const deviceId = getOrCreateDeviceId();
+      const response = await axios.post(`${getApiBaseUrl()}/api/auth/login`, {
+        ...formData,
+        device_id: deviceId
+      });
 
       if (response.data.otp_required) {
         setOtpChallenge({
           challenge_id: response.data.challenge_id,
           destination: response.data.destination,
           dev_otp_code: response.data.dev_otp_code,
+          device_id: deviceId
         });
         toast.success(`Verification code sent to ${response.data.destination}`);
         return;
@@ -60,8 +78,8 @@ export function Login() {
       const { access_token, user } = response.data;
       completeLogin(access_token, user);
     } catch (error: any) {
-      console.error('Login failed:', error);
-      const message = error.response?.data?.detail || 'Invalid employee code or password';
+      console.warn('Login failed');
+      const message = getApiErrorMessage(error, 'Invalid employee code or password');
       toast.error(message);
     } finally {
       setLoading(false);
@@ -83,6 +101,8 @@ export function Login() {
     setCurrentUser(normalizedUser);
     setUserRole(normalizedUser.role);
 
+    setLogoutReason(null);
+
     toast.success(`Welcome back, ${user.name}!`);
     navigate(getPostLoginRoute(normalizedUser.role));
   };
@@ -95,12 +115,13 @@ export function Login() {
     try {
       const response = await axios.post(`${getApiBaseUrl()}/api/auth/login/verify-otp`, {
         challenge_id: otpChallenge.challenge_id,
-        otp_code: otpCode
+        otp_code: otpCode,
+        device_id: otpChallenge.device_id
       });
       completeLogin(response.data.access_token, response.data.user);
     } catch (error: any) {
-      console.error('OTP verification failed:', error);
-      const message = error.response?.data?.detail || 'Invalid or expired login code';
+      console.warn('OTP verification failed');
+      const message = getApiErrorMessage(error, 'Invalid or expired login code');
       toast.error(message);
     } finally {
       setLoading(false);
@@ -193,6 +214,11 @@ export function Login() {
         {/* Login Card */}
         <div className="bg-card/50 backdrop-blur-xl border border-border rounded-3xl p-8 shadow-2xl">
           <form onSubmit={formSubmitHandler} className="space-y-6">
+            {logoutReason && (
+              <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-sm rounded-xl p-3 mb-4 text-center">
+                {logoutReason}
+              </div>
+            )}
             {!resetMode && !otpChallenge ? (
               <>
             <div className="space-y-2">

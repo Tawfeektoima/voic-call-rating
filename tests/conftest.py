@@ -13,6 +13,9 @@ conftest.py — pytest session-scoped ML dependency stubs and isolated database 
 import os
 import sys
 import shutil
+import csv
+from datetime import datetime, timezone
+from pathlib import Path
 import pytest
 from unittest.mock import MagicMock
 
@@ -126,3 +129,42 @@ def test_uploads_session_cleanup():
             shutil.rmtree(test_uploads_dir)
         except Exception:
             pass
+
+
+@pytest.fixture(scope="session")
+def recording_ingestion_fixture_root() -> Path:
+    return Path(__file__).resolve().parent / "fixtures" / "recording_ingestion"
+
+
+@pytest.fixture(scope="session")
+def recording_ingestion_fixture_paths(recording_ingestion_fixture_root: Path) -> dict[str, Path]:
+    return {
+        "sheet_rows": recording_ingestion_fixture_root / "sheet_rows.csv",
+        "valid_audio_mp3": recording_ingestion_fixture_root / "valid_tiny_audio.mp3",
+        "valid_audio_wav": recording_ingestion_fixture_root / "valid_tiny_audio.wav",
+        "malformed_bytes": recording_ingestion_fixture_root / "malformed_bytes.bin",
+        "html_audio_header": recording_ingestion_fixture_root / "html_with_audio_header.bin",
+        "redirect": recording_ingestion_fixture_root / "redirect.txt",
+        "timeout": recording_ingestion_fixture_root / "timeout.txt",
+        "scanner_unavailable": recording_ingestion_fixture_root / "scanner_unavailable.txt",
+    }
+
+
+@pytest.fixture(scope="session")
+def recording_ingestion_sheet_rows(recording_ingestion_fixture_paths: dict[str, Path]) -> list[dict[str, str]]:
+    with recording_ingestion_fixture_paths["sheet_rows"].open("r", encoding="utf-8-sig", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+@pytest.fixture(scope="session")
+def recording_ingestion_fixture_bytes(recording_ingestion_fixture_paths: dict[str, Path]) -> dict[str, bytes]:
+    return {
+        key: path.read_bytes()
+        for key, path in recording_ingestion_fixture_paths.items()
+        if path.is_file() and key != "sheet_rows"
+    }
+
+
+@pytest.fixture(scope="session")
+def recording_ingestion_fixed_now() -> datetime:
+    return datetime(2026, 5, 4, 15, 3, tzinfo=timezone.utc)

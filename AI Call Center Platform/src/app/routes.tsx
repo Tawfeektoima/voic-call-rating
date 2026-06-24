@@ -26,6 +26,7 @@ import { TeamManagerWorkspace } from './pages/TeamManagerWorkspace';
 import { RoleGuard } from './components/auth/RoleGuard';
 import { PERMISSIONS } from './lib/roles';
 import { UserRole } from './lib/types';
+import { AdminSecurity } from './pages/AdminSecurity';
 
 function NotFound() {
   return (
@@ -70,6 +71,7 @@ export const router = createBrowserRouter([
       { path: 'team-manager', element: <RoleGuard requiredPermission={PERMISSIONS.VIEW_TEAM_MANAGER_WORKSPACE}><TeamManagerWorkspace /></RoleGuard> },
       { path: 'notes', element: <RoleGuard requiredPermission={PERMISSIONS.VIEW_NOTES}><NotesInbox /></RoleGuard> },
       { path: 'notes/:noteId', element: <RoleGuard requiredPermission={PERMISSIONS.VIEW_NOTES}><NoteThread /></RoleGuard> },
+      { path: 'admin/security', element: <RoleGuard allowedRoles={[UserRole.ADMIN]}><AdminSecurity /></RoleGuard> },
       { path: '*', Component: NotFound },
     ],
   },

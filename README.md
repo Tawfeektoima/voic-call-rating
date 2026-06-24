@@ -64,10 +64,32 @@ Use the production compose file for API, worker, PostgreSQL, and Redis services:
 ```bash
 docker compose -f docker-compose.prod.yml up -d postgres redis
 docker compose -f docker-compose.prod.yml run --rm api alembic upgrade head
-docker compose -f docker-compose.prod.yml up -d api worker
+docker compose -f docker-compose.prod.yml up -d scanner-updater scanner media-verifier api worker ingestion-downloader ingestion-inspector ingestion-scheduler
 ```
 
-The production stack expects PostgreSQL and Redis credentials in the environment.
+The production stack expects PostgreSQL and Redis credentials in the environment. For the recording-ingestion VM path, keep `CALL_INGEST_ENABLED=false` until the manual validation sequence passes inside the guest.
+
+## VM Ingestion Deployment
+
+- Run the production stack only inside the dedicated Ubuntu VM described in [docs/vm-ingestion-runbook.md](docs/vm-ingestion-runbook.md).
+- Keep the management port guest-local only. `docker-compose.prod.yml` binds the API to `127.0.0.1:8000:8000`.
+- Keep the Google Sheets credential outside the repo and expose it only through the Compose secret path `/run/secrets/vicdi-sheets-reader.json`.
+- Use split runtime roles in production: `api`, `gpu_worker`, `downloader`, `inspector`, and `scheduler`. Do not use `CALL_INGEST_RUNTIME_ROLE=all` in production.
+- Keep raw recording storage on VM-local named volumes only. Do not bind-mount a Windows host folder into any ingestion service.
+
+Enable the scheduler only after this sequence succeeds:
+
+1. `docker compose -f docker-compose.prod.yml run --rm api alembic upgrade head`
+2. `docker compose -f docker-compose.prod.yml up -d postgres redis scanner-updater scanner media-verifier api worker ingestion-downloader ingestion-inspector`
+3. Run one manual ingestion request and confirm only accepted files create `Call` records.
+4. Verify [docs/vm-isolation-verification.md](docs/vm-isolation-verification.md) and the release evidence block in the VM runbook.
+5. Start `ingestion-scheduler` and set `CALL_INGEST_ENABLED=true`.
+
+Rollback action:
+
+- Stop `ingestion-scheduler` first.
+- If needed, also stop `ingestion-downloader` and `ingestion-inspector`.
+- Restore the VM snapshot identified in the runbook, re-run the manual validation sequence, and only then re-enable the schedule.
 
 ## Release Verification
 

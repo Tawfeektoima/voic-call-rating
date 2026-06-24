@@ -1,0 +1,208 @@
+openapi: 3.1.0
+info:
+  title: Recording Ingestion Operations API
+  version: 1.0.0
+  description: Safe operational control and reconciliation for spreadsheet recording ingestion.
+paths:
+  /api/recording-ingestion/runs:
+    post:
+      summary: Request a manual ingestion run
+      security: [{ bearerAuth: [] }]
+      responses:
+        '202':
+          description: Run accepted for the dedicated ingestion queue.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecordingIngestionRunOut' }
+        '403': { description: Caller lacks calls.ingestion.manage permission. }
+        '409': { description: Another non-terminal run is already active for this source. }
+        '503': { description: Source configuration or queue is unavailable. }
+    get:
+      summary: List ingestion runs
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+      responses:
+        '200':
+          description: Recent sanitized run summaries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/RecordingIngestionRunOut' }
+  /api/recording-ingestion/runs/{run_id}:
+    get:
+      summary: Read one run and its per-record outcomes
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Sanitized run detail and paginated record outcomes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run, records, total, limit, offset]
+                properties:
+                  run: { $ref: '#/components/schemas/RecordingIngestionRunOut' }
+                  records:
+                    type: array
+                    items: { $ref: '#/components/schemas/RecordingIngestionRecordOut' }
+                  total: { type: integer, minimum: 0, description: Total records in this run before pagination. }
+                  limit: { type: integer, minimum: 1, maximum: 100 }
+                  offset: { type: integer, minimum: 0 }
+        '404': { description: Run does not exist. }
+  /api/recording-ingestion/records/{record_id}/retry:
+    post:
+      summary: Retry a failed, retryable, or review-required source record
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/RecordId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecordingIngestionRetryRequest' }
+      responses:
+        '202':
+          description: Retry run accepted; response contains the record's safe status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecordingIngestionRetryOut' }
+        '400': { description: Record is not eligible for retry. }
+        '403': { description: Caller lacks calls.ingestion.manage permission. }
+        '404': { description: Record does not exist. }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    RunId:
+      in: path
+      name: run_id
+      required: true
+      schema: { type: integer, minimum: 1 }
+    RecordId:
+      in: path
+      name: record_id
+      required: true
+      schema: { type: integer, minimum: 1 }
+    Limit:
+      in: query
+      name: limit
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    Offset:
+      in: query
+      name: offset
+      required: false
+      schema: { type: integer, minimum: 0, default: 0 }
+  schemas:
+    RecordingIngestionRunStatus:
+      type: string
+      enum: [requested, reading_source, processing, completed, completed_with_errors, failed]
+    RecordingIngestionRecordStatus:
+      type: string
+      enum: [pending, downloading, quarantined, inspecting, accepted, handoff_pending, submitted, duplicate, failed, retry_scheduled, requires_review, rejected]
+    RecordingIngestionAttemptPhase:
+      type: string
+      enum: [validation, download, signature_check, malware_scan, media_verification, storage, handoff]
+    RecordingIngestionAttemptStatus:
+      type: string
+      enum: [started, succeeded, failed, skipped_duplicate, retry_scheduled]
+    RecordingIngestionInspectionStatus:
+      type: string
+      enum: [pending, passed, rejected, unavailable]
+    RecordingIngestionRunTrigger:
+      type: string
+      enum: [scheduled, manual, retry, reconciliation]
+    RecordingIngestionRunOut:
+      type: object
+      required: [id, source_name, trigger, status, rows_seen, new_count, duplicate_count, success_count, failed_count, retryable_count, created_at]
+      properties:
+        id: { type: integer }
+        source_name: { type: string, example: vicdi_tests }
+        trigger: { $ref: '#/components/schemas/RecordingIngestionRunTrigger' }
+        status: { $ref: '#/components/schemas/RecordingIngestionRunStatus' }
+        rows_seen: { type: integer, minimum: 0 }
+        new_count: { type: integer, minimum: 0 }
+        duplicate_count: { type: integer, minimum: 0 }
+        success_count: { type: integer, minimum: 0 }
+        failed_count: { type: integer, minimum: 0 }
+        retryable_count: { type: integer, minimum: 0 }
+        failure_summary: { type: [string, 'null'], description: Sanitized run-level error. }
+        started_at: { type: [string, 'null'], format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+    RecordingIngestionRecordOut:
+      type: object
+      required:
+        [id, source_row_number, source_reference, recording_url_fingerprint, status, attempt_count, signature_status, malware_scan_status, media_verification_status, created_at]
+      properties:
+        id: { type: integer }
+        source_row_number: { type: integer, minimum: 2 }
+        source_reference: { type: [string, 'null'], description: CRDTS when available; the recording URL is never returned. }
+        recording_url_fingerprint: { type: string, description: Stable fingerprint of the source recording link. }
+        agent_code: { type: [string, 'null'] }
+        agent_name: { type: [string, 'null'] }
+        source_call_date: { type: [string, 'null'], format: date }
+        source_score: { type: [number, 'null'] }
+        source_quality_notes: { type: [string, 'null'] }
+        status: { $ref: '#/components/schemas/RecordingIngestionRecordStatus' }
+        attempt_count: { type: integer, minimum: 0 }
+        call_id: { type: [integer, 'null'] }
+        error_category: { type: [string, 'null'], description: Sanitized category only; never a raw URL, credential, or file path. }
+        error_detail: { type: [string, 'null'], description: Sanitized detail with no URL or credential. }
+        next_retry_at: { type: [string, 'null'], format: date-time }
+        file_sha256: { type: [string, 'null'] }
+        byte_size: { type: [integer, 'null'], minimum: 0 }
+        content_type: { type: [string, 'null'] }
+        signature_status: { $ref: '#/components/schemas/RecordingIngestionInspectionStatus' }
+        malware_scan_status: { $ref: '#/components/schemas/RecordingIngestionInspectionStatus' }
+        media_verification_status: { $ref: '#/components/schemas/RecordingIngestionInspectionStatus' }
+        scanner_name: { type: [string, 'null'] }
+        scanner_version: { type: [string, 'null'] }
+        inspection_completed_at: { type: [string, 'null'], format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+    RecordingIngestionAttemptOut:
+      type: object
+      required: [id, ingestion_record_id, ingestion_run_id, attempt_number, phase, status, started_at]
+      properties:
+        id: { type: integer }
+        ingestion_record_id: { type: integer }
+        ingestion_run_id: { type: integer }
+        attempt_number: { type: integer, minimum: 1 }
+        phase: { $ref: '#/components/schemas/RecordingIngestionAttemptPhase' }
+        status: { $ref: '#/components/schemas/RecordingIngestionAttemptStatus' }
+        error_category: { type: [string, 'null'], description: Sanitized attempt error category. }
+        error_detail: { type: [string, 'null'], description: Sanitized detail with no URL or credential. }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+        http_status: { type: [integer, 'null'] }
+        bytes_downloaded: { type: [integer, 'null'], minimum: 0 }
+    RecordingIngestionRetryRequest:
+      type: object
+      properties:
+        reason:
+          type: [string, 'null']
+          maxLength: 500
+          description: Optional sanitized operator note.
+    RecordingIngestionRetryOut:
+      allOf:
+        - { $ref: '#/components/schemas/RecordingIngestionRecordOut' }
+        - type: object
+          required: [retry_requested_at]
+          properties:
+            retry_requested_at: { type: [string, 'null'], format: date-time }

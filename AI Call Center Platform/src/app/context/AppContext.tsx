@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserRole, CurrentUser } from '../lib/types';
-import { getCurrentUser } from '../lib/api';
+import { getCurrentUser, registerSecurityErrorCallback, isSafeDisplayMessage } from '../lib/api';
 import { getPermissionsForRole } from '../lib/roles';
 import { Loader2 } from 'lucide-react';
 
@@ -13,6 +13,7 @@ interface AppContextType {
   setPiiMaskingEnabled: (v: boolean) => void;
   sidebarCollapsed: boolean;
   setSidebarCollapsed: (v: boolean) => void;
+  forceLogout: (reason?: string) => void;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -24,8 +25,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  const forceLogout = (reason?: string) => {
+    if (!localStorage.getItem('access_token') && window.location.pathname === '/login') {
+      return;
+    }
+
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('user');
+
+    setCurrentUser(null);
+    setUserRoleState(UserRole.AGENT);
+
+    if (reason) {
+      const sanitizedReason = isSafeDisplayMessage(reason)
+        ? reason
+        : 'Your access is no longer valid. Please sign in again.';
+      sessionStorage.setItem('forced_logout_reason', sanitizedReason);
+    }
+
+    window.location.href = '/login';
+  };
+
   useEffect(() => {
     document.documentElement.classList.add('dark');
+
+    registerSecurityErrorCallback((reason) => {
+      forceLogout(reason);
+    });
 
     const bootstrapSession = async () => {
       const token = localStorage.getItem('access_token');
@@ -96,6 +122,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setPiiMaskingEnabled,
       sidebarCollapsed,
       setSidebarCollapsed,
+      forceLogout,
     }}>
       {children}
     </AppContext.Provider>

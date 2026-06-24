@@ -7,6 +7,12 @@ from app.database import get_db
 from app.models import LiveSession, Employee, SystemLog
 from app.schemas import SessionStartRequest, SessionStartResponse
 from app.routers.auth import get_current_user, get_user_from_token
+from app.services.security_policy import (
+    validate_websocket_security_context,
+    revalidate_websocket_security,
+    WebSocketSecurityError,
+    record_websocket_security_close,
+)
 from app.workers.asr_worker import SessionASRBuffer
 from app.workers.session_flusher import flush_live_session
 from app.services.gpu_router import get_best_gpu
@@ -121,20 +127,47 @@ async def live_audio_websocket(
         
         if not session or session.reconnect_token != token:
             # Unauthorized or invalid session
+            record_websocket_security_close(
+                db,
+                close_code=4003,
+                message="Live session token is invalid",
+                reason_code="LIVE_SESSION_TOKEN_INVALID",
+            )
             await websocket.close(code=4003)
             return
 
-        if not auth_token:
-            await websocket.close(code=4401)
-            return
-
         try:
-            current_user = get_user_from_token(auth_token, db)
+            current_user, ws_security_context = validate_websocket_security_context(db, auth_token)
+        except WebSocketSecurityError as wse:
+            record_websocket_security_close(
+                db,
+                close_code=wse.code,
+                message=wse.message,
+                employee_id=wse.employee_id,
+                reason_code=wse.reason_code,
+                audit_only=wse.audit_only,
+                session_id=wse.session_id,
+            )
+            await websocket.close(code=wse.code)
+            return
         except Exception:
+            record_websocket_security_close(
+                db,
+                close_code=4401,
+                message="Invalid token",
+                reason_code="INVALID_TOKEN",
+            )
             await websocket.close(code=4401)
             return
 
         if current_user.id != session.agent_id:
+            record_websocket_security_close(
+                db,
+                close_code=4403,
+                message="Authenticated user does not own this live session",
+                employee_id=current_user.id,
+                reason_code="LIVE_SESSION_ACCESS_DENIED",
+            )
             await websocket.close(code=4403)
             return
 
@@ -161,9 +194,16 @@ async def live_audio_websocket(
         # 3. Audio Ingestion Loop
         try:
             while True:
-                # Receive binary audio data (raw PCM)
-                data = await websocket.receive_bytes()
-                
+                try:
+                    data = await asyncio.wait_for(
+                        websocket.receive_bytes(),
+                        timeout=settings.SECURITY_WS_REVALIDATION_INTERVAL_SECONDS
+                    )
+                    revalidate_websocket_security(db, ws_security_context)
+                except asyncio.TimeoutError:
+                    revalidate_websocket_security(db, ws_security_context, force=True)
+                    continue
+
                 # --- FIXED-OFFSET SLICER ---
                 if len(data) == 6400:
                     customer_data = data[0:3200]
@@ -188,6 +228,20 @@ async def live_audio_websocket(
                 
         except WebSocketDisconnect:
             print(f"[WS] Session {session_id} disconnected normally.")
+        except WebSocketSecurityError as wse:
+            record_websocket_security_close(
+                db,
+                close_code=wse.code,
+                message=wse.message,
+                employee_id=wse.employee_id,
+                reason_code=wse.reason_code,
+                audit_only=wse.audit_only,
+                session_id=wse.session_id,
+            )
+            try:
+                await websocket.close(code=wse.code)
+            except Exception:
+                pass
     except Exception as e:
         import traceback
         error_msg = f"Live WS session {session_id} crashed: {str(e)}"

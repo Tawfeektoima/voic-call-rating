@@ -3,9 +3,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getCallDetails } from '../lib/api';
 import { getWebSocketBaseUrl } from '../lib/network';
 import { Call } from '../lib/types';
+import { useApp } from '../context/AppContext';
+import { toast } from 'sonner';
 
 export const useCallStatus = (callId: number | null) => {
   const queryClient = useQueryClient();
+  const { forceLogout } = useApp();
 
   useEffect(() => {
     if (!callId) return;
@@ -23,10 +26,20 @@ export const useCallStatus = (callId: number | null) => {
       }
     };
 
+    socket.onclose = (event) => {
+      if (event.code === 4401) {
+        forceLogout("Your session is no longer valid. Please sign in again.");
+      } else if (event.code === 4403) {
+        forceLogout("Your access is no longer allowed from this device or shift.");
+      } else if (event.code === 1011) {
+        toast.error("The connection ended unexpectedly. Please try again.");
+      }
+    };
+
     return () => {
       socket.close();
     };
-  }, [callId, queryClient]);
+  }, [callId, queryClient, forceLogout]);
 
   return useQuery<Call>({
     queryKey: ['callStatus', callId],

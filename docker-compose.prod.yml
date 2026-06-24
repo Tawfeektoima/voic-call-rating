@@ -15,38 +15,101 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks: [data-internal]
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command:
-      [
-        "redis-server",
-        "--appendonly",
-        "yes",
-        "--requirepass",
-        "${REDIS_PASSWORD}",
-        "--maxmemory",
-        "2gb",
-        "--maxmemory-policy",
-        "allkeys-lru"
-      ]
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}", "--maxmemory", "2gb", "--maxmemory-policy", "allkeys-lru"]
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD} ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks: [data-internal]
+
+  # Definition updates need egress; the scan daemon never does. This keeps the
+  # scanner itself reachable only from the internal scanning network.
+  scanner-updater:
+    build: { context: . }
+    restart: unless-stopped
+    user: "clamav:clamav"
+    read_only: true
+    command: ["/bin/sh", "-lc", "while true; do freshclam --stdout || true; sleep 21600; done"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp, /var/tmp]
+    pids_limit: 64
+    mem_limit: 512m
+    cpus: "0.5"
+    volumes:
+      - clamav-db:/var/lib/clamav
+    networks: [backend]
+
+  scanner:
+    build: { context: . }
+    restart: unless-stopped
+    user: "clamav:clamav"
+    read_only: true
+    command: ["/bin/sh", "-lc", "printf 'Foreground true\nTCPSocket 3310\nTCPAddr 0.0.0.0\nDatabaseDirectory /var/lib/clamav\n' > /tmp/clamd.conf && exec clamd -F --config-file=/tmp/clamd.conf"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp, /var/tmp]
+    pids_limit: 128
+    mem_limit: 1024m
+    cpus: "1.0"
+    volumes:
+      - clamav-db:/var/lib/clamav:ro
+    depends_on:
+      scanner-updater:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --config-file=/tmp/clamd.conf /etc/hosts >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    networks: [scanner-internal]
+
+  # Parses only a read-only quarantine mount. It has no route to the internet,
+  # no database credentials, and no accepted/rejected storage mount.
+  media-verifier:
+    build: { context: . }
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp, /var/tmp]
+    pids_limit: 64
+    mem_limit: 384m
+    cpus: "0.5"
+    environment:
+      SECRET_KEY: ${SECRET_KEY}
+      CALL_INGEST_QUARANTINE_DIR: /var/lib/call-rating/quarantine
+      CALL_INGEST_VM_STORAGE_ROOT: /var/lib/call-rating
+    volumes:
+      - ingestion-quarantine:/var/lib/call-rating/quarantine:ro
+    command: ["uvicorn", "app.services.media_verifier_server:app", "--host", "0.0.0.0", "--port", "8090"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [verifier-internal]
 
   api:
-    build:
-      context: .
+    build: { context: . }
     restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp, /var/tmp]
+    pids_limit: 256
+    mem_limit: 1024m
+    cpus: "1.5"
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment: &platform-environment
       ENVIRONMENT: production
       SECRET_KEY: ${SECRET_KEY}
       DATABASE_URL: ${DATABASE_URL}
@@ -62,37 +125,179 @@ services:
       UPLOAD_DIR: ${UPLOAD_DIR:-uploads}
       MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB:-100}
       ALLOWED_EXTENSIONS: ${ALLOWED_EXTENSIONS:-.wav,.mp3,.m4a,.ogg,.flac,.webm}
+      CALL_INGEST_ENABLED: ${CALL_INGEST_ENABLED:-false}
+      CALL_INGEST_DEFAULT_CAMPAIGN_ID: ${CALL_INGEST_DEFAULT_CAMPAIGN_ID:-0}
+      CALL_INGEST_ALLOWED_RECORDING_HOSTS: ${CALL_INGEST_ALLOWED_RECORDING_HOSTS:-archive.dial-fusion.com}
+      CALL_INGEST_INTERVAL_MINUTES: ${CALL_INGEST_INTERVAL_MINUTES:-15}
+      CALL_INGEST_DOWNLOAD_CONCURRENCY: ${CALL_INGEST_DOWNLOAD_CONCURRENCY:-4}
+      CALL_INGEST_RETRY_LIMIT: ${CALL_INGEST_RETRY_LIMIT:-3}
+      CALL_INGEST_REQUEST_TIMEOUT_SECONDS: ${CALL_INGEST_REQUEST_TIMEOUT_SECONDS:-30}
+      CALL_INGEST_INSPECTION_TIMEOUT_SECONDS: ${CALL_INGEST_INSPECTION_TIMEOUT_SECONDS:-60}
+      CALL_INGEST_MEDIA_VERIFY_TIMEOUT_SECONDS: ${CALL_INGEST_MEDIA_VERIFY_TIMEOUT_SECONDS:-60}
+      CALL_INGEST_VM_STORAGE_ROOT: /var/lib/call-rating
+      CALL_INGEST_RUNTIME_ROLE: api
+    volumes: ["call-uploads:/app/uploads"]
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-    ports:
-      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    ports: ["127.0.0.1:8000:8000"]
+    networks: [data-internal, backend]
 
   worker:
-    build:
-      context: .
+    build: { context: . }
     restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp, /var/tmp]
+    pids_limit: 256
+    mem_limit: 2048m
+    cpus: "2.0"
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
     environment:
-      ENVIRONMENT: production
-      SECRET_KEY: ${SECRET_KEY}
-      DATABASE_URL: ${DATABASE_URL}
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_DB: 0
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      REDIS_URL: ""
-      CELERY_BROKER_URL: ""
-      HF_TOKEN: ${HF_TOKEN}
-      GROQ_API_KEY: ${GROQ_API_KEY}
-      GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
-      UPLOAD_DIR: ${UPLOAD_DIR:-uploads}
-      MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB:-100}
-      ALLOWED_EXTENSIONS: ${ALLOWED_EXTENSIONS:-.wav,.mp3,.m4a,.ogg,.flac,.webm}
-    command: ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info"]
+      <<: *platform-environment
+      CALL_INGEST_RUNTIME_ROLE: gpu_worker
+    volumes:
+      - call-uploads:/app/uploads
+      - ingestion-accepted:/var/lib/call-rating/accepted:ro
+    command: ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "-Q", "celery", "-n", "gpu-worker@%h"]
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.worker.celery_app inspect ping -d gpu-worker@$HOSTNAME | grep -q pong"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+    networks: [data-internal, backend]
+
+  # Only this service can make HTTPS requests and it only sees quarantine.
+  ingestion-downloader:
+    build: { context: . }
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp, /var/tmp]
+    pids_limit: 256
+    mem_limit: 1024m
+    cpus: "1.5"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      <<: *platform-environment
+      CALL_INGEST_RUNTIME_ROLE: downloader
+      CALL_INGEST_GOOGLE_SHEET_ID: ${CALL_INGEST_GOOGLE_SHEET_ID}
+      CALL_INGEST_WORKSHEET: ${CALL_INGEST_WORKSHEET:-الورقة1}
+      CALL_INGEST_RANGE: ${CALL_INGEST_RANGE:-A:ZZ}
+      GOOGLE_SERVICE_ACCOUNT_FILE: /run/secrets/vicdi-sheets-reader.json
+      GOOGLE_SERVICE_ACCOUNT_FILE_HOST: ${GOOGLE_SERVICE_ACCOUNT_FILE_HOST}
+      CALL_INGEST_QUARANTINE_DIR: /var/lib/call-rating/quarantine
+      CALL_INGEST_VM_STORAGE_ROOT: /var/lib/call-rating
+    volumes:
+      - ingestion-quarantine:/var/lib/call-rating/quarantine
+      - ingestion-state:/var/lib/call-rating/state
+    secrets:
+      - source: vicdi-sheets-reader
+        target: vicdi-sheets-reader.json
+        mode: 0400
+    command: ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "-Q", "ingestion-download", "-n", "ingestion-downloader@%h"]
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.worker.celery_app inspect ping -d ingestion-downloader@$HOSTNAME | grep -q pong"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+    networks: [data-internal, backend]
+
+  ingestion-scheduler:
+    build: { context: . }
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp, /var/tmp]
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: "0.25"
+    depends_on:
+      redis: { condition: service_healthy }
+    environment:
+      <<: *platform-environment
+      CALL_INGEST_RUNTIME_ROLE: scheduler
+    volumes:
+      - ingestion-state:/var/lib/call-rating/state
+    command: ["celery", "-A", "app.worker.celery_app", "beat", "--loglevel=info", "--schedule=/var/lib/call-rating/state/celerybeat-schedule", "--pidfile=/var/lib/call-rating/state/celerybeat.pid"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/lib/call-rating/state/celerybeat.pid"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    networks: [data-internal]
+
+  # The promotion boundary: it can inspect quarantine and atomically move a
+  # passing file, but it has no external network.  It is the only service that
+  # receives accepted and rejected storage mounts.
+  ingestion-inspector:
+    build: { context: . }
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp, /var/tmp]
+    pids_limit: 256
+    mem_limit: 1024m
+    cpus: "1.5"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      scanner: { condition: service_started }
+      media-verifier: { condition: service_healthy }
+    environment:
+      <<: *platform-environment
+      CALL_INGEST_RUNTIME_ROLE: inspector
+      CALL_INGEST_QUARANTINE_DIR: /var/lib/call-rating/quarantine
+      CALL_INGEST_ACCEPTED_DIR: /var/lib/call-rating/accepted
+      CALL_INGEST_REJECTED_DIR: /var/lib/call-rating/rejected
+      CALL_INGEST_SCANNER_ENDPOINT: clamd://scanner:3310
+      CALL_INGEST_MEDIA_VERIFIER_ENDPOINT: http://media-verifier:8090
+      CALL_INGEST_VM_STORAGE_ROOT: /var/lib/call-rating
+    volumes:
+      - ingestion-quarantine:/var/lib/call-rating/quarantine
+      - ingestion-accepted:/var/lib/call-rating/accepted
+      - ingestion-rejected:/var/lib/call-rating/rejected
+      - ingestion-state:/var/lib/call-rating/state
+    command: ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "-Q", "ingestion-inspection", "-n", "ingestion-inspector@%h"]
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.worker.celery_app inspect ping -d ingestion-inspector@$HOSTNAME | grep -q pong"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+    networks: [data-internal, scanner-internal, verifier-internal]
 
 volumes:
-  pgdata:
-    driver: local
+  call-uploads: { driver: local }
+  ingestion-quarantine: { driver: local }
+  ingestion-accepted: { driver: local }
+  ingestion-rejected: { driver: local }
+  ingestion-state: { driver: local }
+  pgdata: { driver: local }
+  clamav-db: { driver: local }
+
+secrets:
+  vicdi-sheets-reader:
+    file: ${GOOGLE_SERVICE_ACCOUNT_FILE_HOST}
+
+networks:
+  backend: { driver: bridge }
+  data-internal:
+    driver: bridge
+    internal: true
+  scanner-internal:
+    driver: bridge
+    internal: true
+  verifier-internal:
+    driver: bridge
+    internal: true

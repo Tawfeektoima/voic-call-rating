@@ -1,13 +1,15 @@
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.main import app
 from app.database import SessionLocal
 from app.models import AgentViolation, AppPermission, AuditEvent, Call, CallStatus, Campaign, Employee, RolePermission, UserRole
-from app.permissions import ROLE_PERMISSIONS
+from app.permissions import Permission, ROLE_PERMISSIONS
 from app.routers.auth import get_current_user
-from app.services.role_permissions import backfill_interview_role_permissions, get_role_permission_values, seed_role_permissions, set_role_permission_values
+from app.security import require_ingestion_management_access
+from app.services.role_permissions import backfill_ingestion_role_permissions, backfill_interview_role_permissions, get_role_permission_values, seed_role_permissions, set_role_permission_values
 
 client = TestClient(app)
 
@@ -27,6 +29,7 @@ def cleanup_permission_tests():
         db.query(AppPermission).filter(AppPermission.key.like("hr.interviews.%")).delete(synchronize_session=False)
         db.query(AuditEvent).filter(AuditEvent.target.like("Employee test_perm_%")).delete(synchronize_session=False)
         db.query(AuditEvent).filter(AuditEvent.action == "PERMISSION_CHANGE", AuditEvent.target == "Role TEAM_MANAGER").delete(synchronize_session=False)
+        db.query(AppPermission).filter(AppPermission.key == "calls.ingestion.manage").delete(synchronize_session=False)
         db.query(Employee).filter(Employee.email.like("test_perm_%")).delete(synchronize_session=False)
         db.commit()
     finally:
@@ -200,6 +203,102 @@ def test_backfill_interview_role_permissions_restores_hr_interview_access():
         assert restored is not None
     finally:
         db.close()
+
+
+def test_ingestion_manage_permission_is_admin_only_and_visible_in_catalog():
+    db: Session = SessionLocal()
+    try:
+        seed_role_permissions(db)
+        backfill_ingestion_role_permissions(db)
+        db.commit()
+
+        admin_permissions = set(get_role_permission_values(db, UserRole.ADMIN))
+        qa_permissions = set(get_role_permission_values(db, UserRole.QA))
+        agent_permissions = set(get_role_permission_values(db, UserRole.AGENT))
+
+        assert Permission.MANAGE_RECORDING_INGESTION.value in admin_permissions
+        assert Permission.MANAGE_RECORDING_INGESTION.value not in qa_permissions
+        assert Permission.MANAGE_RECORDING_INGESTION.value not in agent_permissions
+    finally:
+        db.close()
+
+
+def test_backfill_ingestion_role_permissions_restores_admin_ingestion_access():
+    db: Session = SessionLocal()
+    try:
+        seed_role_permissions(db)
+        db.commit()
+
+        ingestion_manage = (
+            db.query(AppPermission)
+            .filter(AppPermission.key == Permission.MANAGE_RECORDING_INGESTION.value)
+            .first()
+        )
+        assert ingestion_manage is not None
+
+        db.query(RolePermission).filter(
+            RolePermission.role == UserRole.ADMIN,
+            RolePermission.permission_id == ingestion_manage.id,
+        ).delete(synchronize_session=False)
+        db.commit()
+
+        backfill_ingestion_role_permissions(db)
+        db.commit()
+
+        restored = (
+            db.query(RolePermission)
+            .filter(
+                RolePermission.role == UserRole.ADMIN,
+                RolePermission.permission_id == ingestion_manage.id,
+            )
+            .first()
+        )
+        assert restored is not None
+    finally:
+        db.close()
+
+
+def test_ingestion_management_helper_denies_non_admin_users():
+    agent = Employee(
+        id=91011,
+        name="Permission Agent",
+        email="test_perm_ingest_agent@example.com",
+        role=UserRole.AGENT,
+        employee_code="PERM_INGEST_AGENT",
+        hashed_password="fake",
+        status="active",
+    )
+    qa = Employee(
+        id=91012,
+        name="Permission QA",
+        email="test_perm_ingest_qa@example.com",
+        role=UserRole.QA,
+        employee_code="PERM_INGEST_QA",
+        hashed_password="fake",
+        status="active",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        require_ingestion_management_access(agent)
+    assert exc_info.value.status_code == 403
+
+    with pytest.raises(HTTPException) as exc_info:
+        require_ingestion_management_access(qa)
+    assert exc_info.value.status_code == 403
+
+
+def test_ingestion_management_helper_allows_admin_user():
+    admin = Employee(
+        id=91013,
+        name="Permission Admin",
+        email="test_perm_ingest_admin@example.com",
+        role=UserRole.ADMIN,
+        employee_code="PERM_INGEST_ADMIN",
+        hashed_password="fake",
+        status="active",
+    )
+
+    require_ingestion_management_access(admin)
 
 
 def test_hr_manager_can_update_non_admin_role_but_not_assign_admin():

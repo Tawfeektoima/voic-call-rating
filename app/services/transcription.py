@@ -1,5 +1,6 @@
 import gc
 import os
+import re
 import subprocess
 import warnings
 from typing import Any, Dict, List
@@ -33,6 +34,26 @@ else:
 from app.config import get_settings
 
 settings = get_settings()
+
+_CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
+_WHITESPACE_PATTERN = re.compile(r"\s+")
+
+
+def sanitize_untrusted_text(value: Any, fallback: str = "") -> str:
+    """
+    Normalize transcript and metadata strings so they are treated as inert data.
+
+    This removes control characters and collapses whitespace, but it does not
+    attempt semantic interpretation. Downstream code still has to treat the
+    returned value as untrusted content.
+    """
+    if value is None:
+        return fallback
+
+    text = str(value).replace("\ufeff", "").replace("\u200b", "")
+    text = _CONTROL_CHAR_PATTERN.sub(" ", text)
+    text = _WHITESPACE_PATTERN.sub(" ", text).strip()
+    return text or fallback
 
 
 class CallTranscriber:
@@ -195,7 +216,8 @@ class CallTranscriber:
             elif self.hf_token and not DIARIZATION_AVAILABLE:
                 print(f"[!] Skipping diarization because the pipeline is unavailable: {DIARIZATION_IMPORT_ERROR}")
 
-            return result.get("segments", []), duration
+            structured_segments = self._build_structured_transcript(result.get("segments", []))
+            return structured_segments, duration
         finally:
             if model is not None:
                 del model
@@ -234,7 +256,7 @@ class CallTranscriber:
         last_text = ""
 
         for seg in segments:
-            current_text = seg.get("text", "").strip()
+            current_text = sanitize_untrusted_text(seg.get("text", ""))
             seg_duration = seg.get("end", 0) - seg.get("start", 0)
             text_lower = current_text.lower()
 
@@ -271,11 +293,15 @@ class CallTranscriber:
             output.append(
                 {
                     "id": str(i),
-                    "start": segment.get("start", 0.0),
-                    "end": segment.get("end", 0.0),
-                    "speaker": segment.get("speaker", "UNKNOWN"),
-                    "text": segment.get("text", "").strip(),
-                    "emotion": "calm",
+                    "start": float(segment.get("start", 0.0) or 0.0),
+                    "end": float(segment.get("end", 0.0) or 0.0),
+                    "speaker": sanitize_untrusted_text(segment.get("speaker", "UNKNOWN"), fallback="UNKNOWN"),
+                    "text": sanitize_untrusted_text(segment.get("text", "")),
+                    "emotion": sanitize_untrusted_text(segment.get("emotion", "calm"), fallback="calm"),
+                    "needs_review": bool(segment.get("needs_review", False)),
+                    "words": segment.get("words", []),
+                    "avg_logprob": segment.get("avg_logprob"),
+                    "no_speech_prob": segment.get("no_speech_prob"),
                 }
             )
         return output

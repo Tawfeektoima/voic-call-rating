@@ -47,11 +47,13 @@ def validate_password_strength(password: str) -> None:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
-    else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    issued_at = datetime.now(timezone.utc)
+    expire = issued_at + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"iat": issued_at, "exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def require_ingestion_management_access(current_user, detail: str = "Only admins can manage recording ingestion.") -> None:
+    from app.permissions import Permission, require_permission
+
+    require_permission(current_user, Permission.MANAGE_RECORDING_INGESTION, detail=detail)

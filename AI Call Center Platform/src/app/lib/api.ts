@@ -57,6 +57,8 @@ import {
   InterviewQuestionStartOut,
   InterviewQuestionOut,
   InterviewRetentionPurgeOut,
+  UserLogin,
+  UserOtpVerify,
 } from './types';
 import { getApiBaseUrl } from './network';
 
@@ -68,26 +70,62 @@ const api = axios.create({
   },
 });
 
+export function isSafeDisplayMessage(message: string): boolean {
+  if (typeof message !== 'string') return false;
+
+  // Check for forbidden keywords/sensitive keys using token/key-aware regexes with lookarounds
+  const unsafeRegex = /(?<![a-zA-Z])(sid|jti|device_id_hash|device_id|device hash|bearer)(?![a-zA-Z])/i;
+  if (unsafeRegex.test(message)) {
+    return false;
+  }
+
+  // Check for JWT-like strings: three dot-separated base64url segments
+  const jwtRegex = /[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/;
+  if (jwtRegex.test(message)) {
+    return false;
+  }
+
+  // Check for long hex strings (32+ hex chars)
+  const longHexRegex = /[a-fA-F0-9]{32,}/;
+  if (longHexRegex.test(message)) {
+    return false;
+  }
+
+  return true;
+}
+
+export function getSafeSecurityLogoutReason(error: unknown): string {
+  const fallback = 'Your access is no longer valid. Please sign in again.';
+  return getApiErrorMessage(error, fallback);
+}
+
 export const getApiErrorMessage = (error: unknown, fallback: string): string => {
   if (!axios.isAxiosError(error)) return fallback;
 
   const detail = (error.response?.data as any)?.detail;
   if (typeof detail === 'string' && detail.trim()) {
-    return detail;
+    return isSafeDisplayMessage(detail) ? detail : fallback;
+  }
+
+  if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+    if (typeof detail.message === 'string' && detail.message.trim()) {
+      return isSafeDisplayMessage(detail.message) ? detail.message : fallback;
+    }
   }
 
   if (Array.isArray(detail) && detail.length > 0) {
     const first = detail[0];
     if (typeof first === 'string' && first.trim()) {
-      return first;
+      return isSafeDisplayMessage(first) ? first : fallback;
     }
     if (first && typeof first === 'object' && typeof first.msg === 'string' && first.msg.trim()) {
-      return first.msg;
+      return isSafeDisplayMessage(first.msg) ? first.msg : fallback;
     }
   }
 
   if (typeof (error.response?.data as any)?.message === 'string') {
-    return (error.response?.data as any).message;
+    const msg = (error.response?.data as any).message;
+    return isSafeDisplayMessage(msg) ? msg : fallback;
   }
 
   return fallback;
@@ -105,32 +143,97 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
+export function isSecurityAuthError(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) return false;
+  const status = error.response?.status;
+  if (status !== 401 && status !== 403) return false;
+
+  // Do not treat login or password reset failures as forced logout errors.
+  const url = error.config?.url || '';
+  if (url.includes('/api/auth/login') || url.includes('/api/auth/password-reset')) {
+    return false;
+  }
+
+  if (status === 401) {
+    return true;
+  }
+
+  if (status === 403) {
+    const detail = (error.response?.data as any)?.detail;
+    let detailText = '';
+
+    if (typeof detail === 'string') {
+      detailText = detail;
+    } else if (detail && typeof detail === 'object') {
+      if (typeof detail.message === 'string') {
+        detailText = detail.message;
+      } else if (typeof detail.code === 'string') {
+        detailText = detail.code;
+      }
+    }
+
+    if (detailText) {
+      const lowercaseDetail = detailText.toLowerCase();
+
+      // Ignore administrative/role permission failures (e.g., managing shifts or admin actions)
+      if (
+        lowercaseDetail.includes('manage shifts') ||
+        lowercaseDetail.includes('only admins') ||
+        lowercaseDetail.includes('permission to view this') ||
+        lowercaseDetail.includes('permission to access this')
+      ) {
+        return false;
+      }
+
+      const securityPhrases = [
+        'session',
+        'revoked',
+        'expired',
+        'device',
+        'trusted',
+        'shift',
+        'access is no longer valid',
+        'outside allowed working hours'
+      ];
+      return securityPhrases.some(phrase => lowercaseDetail.includes(phrase));
+    }
+    return false;
+  }
+
+  return false;
+}
+
+let securityErrorCallback: ((reason: string) => void) | null = null;
+
+export function registerSecurityErrorCallback(cb: (reason: string) => void) {
+  securityErrorCallback = cb;
+}
+
 // Response interceptor for global error handling
 api.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
-    const responseStatus = error.response?.status;
     const detail = (error.response?.data as any)?.detail;
     const hasInterviewPortalToken = Boolean((error.config?.headers as any)?.['X-Interview-Session-Token']);
     const isPublicInterviewPortal = typeof window !== 'undefined' && window.location.pathname === '/interview-portal';
 
-    if (!hasInterviewPortalToken && !isPublicInterviewPortal && (responseStatus === 401 || (responseStatus === 403 && typeof detail === 'string' && detail.toLowerCase().includes('account is')))) {
-      console.warn('Unauthorized - Clearing session and redirecting to login');
-      localStorage.removeItem('access_token');
-      localStorage.removeItem('user');
+    if (!hasInterviewPortalToken && !isPublicInterviewPortal && isSecurityAuthError(error)) {
+      console.warn('Security auth error - triggering forced logout');
+      const reason = getSafeSecurityLogoutReason(error);
       
-      // Force redirect to login
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
+      if (securityErrorCallback) {
+        securityErrorCallback(reason);
+      } else {
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('user');
+        if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
       }
     }
     return Promise.reject(error);
   }
 );
-
-/**
- * Admin API Functions
- */
 
 export const getEmployees = async (): Promise<Agent[]> => {
   const response = await api.get<Agent[]>('/api/admin/employees');
