@@ -28,13 +28,18 @@ export function SectionLoader({
   rows?: number;
   className?: string;
 }) {
+  const placeholderRows = Array.from({ length: rows }, (_, rowNumber) => ({
+    id: `section-loader-${rowNumber + 1}`,
+    opacity: 1 - rowNumber * 0.15,
+  }));
+
   return (
     <div className={cn('space-y-2', className)}>
-      {Array.from({ length: rows }).map((_, i) => (
+      {placeholderRows.map((row) => (
         <div
-          key={i}
+          key={row.id}
           className="h-12 rounded-lg bg-secondary animate-pulse"
-          style={{ opacity: 1 - i * 0.15 }}
+          style={{ opacity: row.opacity }}
         />
       ))}
     </div>

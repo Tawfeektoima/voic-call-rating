@@ -1,9 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { 
-  Upload, Search, Filter, Phone, Clock, CheckCircle, 
-  XCircle, AlertCircle, ChevronRight, Loader2, Plus,
-  Database, User, Radio, Trash2
+  Upload, Search, Filter, Phone, CheckCircle, 
+  AlertCircle, ChevronRight, Loader2, Radio, Trash2
 } from 'lucide-react';
 import { useCalls, useUploadAudio, useBulkUploadAudio } from '../hooks/useCalls';
 import { useCampaigns } from '../hooks/useCampaigns';

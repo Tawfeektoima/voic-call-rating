@@ -2,11 +2,11 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Flame, Thermometer, Snowflake, DollarSign, Phone, TrendingUp,
-  ChevronRight, BarChart3, Users, Trophy, ArrowUpRight, Target
+  ChevronRight, Users, Trophy, ArrowUpRight, Target
 } from 'lucide-react';
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer,
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   BarChart, Bar, Cell
 } from 'recharts';
 import { useApp } from '../context/AppContext';

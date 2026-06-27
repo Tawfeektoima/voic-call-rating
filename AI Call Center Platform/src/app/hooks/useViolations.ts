@@ -19,7 +19,7 @@ export const useAgentViolations = (employeeId: number, teamId?: number) =>
     enabled: !!employeeId,
   });
 
-export const useViolationsSummary = (teamId?: number) =>
+export const useViolationsSummary = (teamId?: number, enabled = true) =>
   useQuery({
     queryKey: ["violations-summary", teamId ?? "all"],
     queryFn: async () => {
@@ -28,9 +28,10 @@ export const useViolationsSummary = (teamId?: number) =>
       });
       return res.data as ViolationSummaryRow[];
     },
+    enabled,
   });
 
-export const useViolationStats = (teamId?: number) =>
+export const useViolationStats = (teamId?: number, enabled = true) =>
   useQuery({
     queryKey: ["violation-stats", teamId ?? "all"],
     queryFn: async () => {
@@ -39,9 +40,10 @@ export const useViolationStats = (teamId?: number) =>
       });
       return res.data as ViolationStats;
     },
+    enabled,
   });
 
-export const useViolationTrends = (days: number = 7, teamId?: number) =>
+export const useViolationTrends = (days: number = 7, teamId?: number, enabled = true) =>
   useQuery({
     queryKey: ["violation-trends", days, teamId ?? "all"],
     queryFn: async () => {
@@ -53,4 +55,5 @@ export const useViolationTrends = (days: number = 7, teamId?: number) =>
       });
       return res.data as { date: string; high: number; medium: number; low: number }[];
     },
+    enabled,
   });

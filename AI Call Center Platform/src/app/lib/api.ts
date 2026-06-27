@@ -57,8 +57,6 @@ import {
   InterviewQuestionStartOut,
   InterviewQuestionOut,
   InterviewRetentionPurgeOut,
-  UserLogin,
-  UserOtpVerify,
 } from './types';
 import { getApiBaseUrl } from './network';
 

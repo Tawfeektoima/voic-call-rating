@@ -1,9 +1,9 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router";
 import {
   ShieldAlert, AlertTriangle, CheckCircle2, TrendingUp, Search,
-  ChevronDown, ChevronRight, Activity, Clock, XCircle, BriefcaseBusiness
+  ChevronDown, ChevronRight, Activity, XCircle, BriefcaseBusiness
 } from "lucide-react";
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend
@@ -11,7 +11,7 @@ import {
 import { 
   useViolationStats, useViolationsSummary, useViolationTrends, useAgentViolations 
 } from "../hooks/useViolations";
-import { CallViolation, PendingViolation } from "../lib/types";
+import { PendingViolation } from "../lib/types";
 import { useApp } from "../context/AppContext";
 import { buildNotesComposeUrl } from "../lib/noteNavigation";
 import { approveHrViolation, approveQaViolation, getApiErrorMessage, getPendingHrViolations, getPendingQaViolations, getTeamsDirectory } from "../lib/api";
@@ -127,6 +127,7 @@ export function HRDashboard() {
       ...params,
     }));
   };
+  const hasAccess = userRole === 'admin' || userRole === 'hr_manager' || userRole === 'qa';
   const isQaView = userRole === "qa";
   const canApproveHrViolations = userRole === "admin" || userRole === "hr_manager";
   const canApproveQaViolations = userRole === "admin" || userRole === "qa";
@@ -137,23 +138,14 @@ export function HRDashboard() {
   const [search, setSearch] = useState("");
   const [expandedAgent, setExpandedAgent] = useState<number | null>(null);
   const [sortBy, setSortBy] = useState<"total"|"hr_flags"|"score_impact">("total");
-  
-  if (userRole !== 'admin' && userRole !== 'hr_manager' && userRole !== 'qa') {
-    return (
-      <div className="p-10 flex flex-col items-center justify-center text-center">
-        <ShieldAlert size={48} className="text-red-500 mb-4" />
-        <h1 className="text-2xl font-bold text-foreground mb-2">Access Denied</h1>
-        <p className="text-muted-foreground">You do not have permission to view the HR Dashboard.</p>
-      </div>
-    );
-  }
 
-  const { data: stats } = useViolationStats(selectedTeam);
-  const { data: summary } = useViolationsSummary(selectedTeam);
-  const { data: trends } = useViolationTrends(7, selectedTeam);
+  const { data: stats } = useViolationStats(selectedTeam, hasAccess);
+  const { data: summary } = useViolationsSummary(selectedTeam, hasAccess);
+  const { data: trends } = useViolationTrends(7, selectedTeam, hasAccess);
   const { data: teams } = useQuery({
     queryKey: ["hr-dashboard-teams"],
     queryFn: () => getTeamsDirectory({ active_only: true }),
+    enabled: hasAccess && !isQaView,
   });
   const { data: pending } = useQuery({
     queryKey: [isQaView ? "violations-qa-pending" : "violations-pending", selectedTeamId],
@@ -162,6 +154,7 @@ export function HRDashboard() {
         ? getPendingQaViolations(selectedTeam ? { team_id: selectedTeam } : undefined)
         : getPendingHrViolations(selectedTeam ? { team_id: selectedTeam } : undefined)
     ),
+    enabled: hasAccess,
   });
 
   const { data: pendingAlarms } = useQuery({
@@ -170,7 +163,8 @@ export function HRDashboard() {
       const { default: api } = await import("../lib/api");
       const res = await api.get("/api/hr/alarms/pending");
       return res.data;
-    }
+    },
+    enabled: hasAccess,
   });
 
   const approveMutation = useMutation({
@@ -192,6 +186,16 @@ export function HRDashboard() {
       toast.error(getApiErrorMessage(error, "Unable to approve violation."));
     },
   });
+
+  if (!hasAccess) {
+    return (
+      <div className="p-10 flex flex-col items-center justify-center text-center">
+        <ShieldAlert size={48} className="text-red-500 mb-4" />
+        <h1 className="text-2xl font-bold text-foreground mb-2">Access Denied</h1>
+        <p className="text-muted-foreground">You do not have permission to view the HR Dashboard.</p>
+      </div>
+    );
+  }
 
   const filtered = summary
     ?.filter(row => row.employee_name.toLowerCase().includes(search.toLowerCase()))

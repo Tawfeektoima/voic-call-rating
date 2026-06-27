@@ -929,6 +929,17 @@ class EvaluationResult(BaseModel):
     raw_violations: list = Field(default_factory=list, description="List of violation dicts from LLM, to be processed by apply_violations()")
 
 
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_ai_summary(cls, value):
+        if isinstance(value, dict) and "ai_summary" in value:
+            normalized = dict(value)
+            legacy_summary = normalized.pop("ai_summary")
+            if not normalized.get("summary") and legacy_summary:
+                normalized["summary"] = legacy_summary
+            return normalized
+        return value
+
     @field_validator("strengths", mode="before")
     @classmethod
     def validate_strengths(cls, v):

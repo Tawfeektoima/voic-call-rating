@@ -1,5 +1,4 @@
 import { CheckCircle, AlertCircle, TrendingUp, Award } from 'lucide-react';
-import { cn } from '../ui/utils';
 
 interface Weakness {
   issue: string;
@@ -29,8 +28,8 @@ export function CallAnalysis({ strengths, weaknesses }: Props) {
         
         <div className="space-y-3">
           {hasStrengths ? (
-            strengths.map((s, i) => (
-              <div key={i} className="flex items-start gap-3 p-3 bg-emerald-500/5 border border-emerald-500/10 rounded-lg group hover:bg-emerald-500/8 transition-all">
+            strengths.map((s) => (
+              <div key={s} className="flex items-start gap-3 p-3 bg-emerald-500/5 border border-emerald-500/10 rounded-lg group hover:bg-emerald-500/8 transition-all">
                 <CheckCircle size={14} className="text-emerald-400 mt-0.5 flex-shrink-0" />
                 <p className="text-xs text-foreground font-medium leading-tight">{s}</p>
               </div>
@@ -52,8 +51,8 @@ export function CallAnalysis({ strengths, weaknesses }: Props) {
 
         <div className="space-y-3">
           {hasWeaknesses ? (
-            weaknesses.map((w, i) => (
-              <div key={i} className="p-3 bg-red-500/5 border border-red-500/10 rounded-lg group hover:bg-red-500/8 transition-all">
+            weaknesses.map((w) => (
+              <div key={`${w.issue}-${w.detail}-${w.deduction}`} className="p-3 bg-red-500/5 border border-red-500/10 rounded-lg group hover:bg-red-500/8 transition-all">
                 <div className="flex justify-between items-start gap-2 mb-1.5">
                   <div className="flex items-center gap-2">
                     <AlertCircle size={12} className="text-red-400" />

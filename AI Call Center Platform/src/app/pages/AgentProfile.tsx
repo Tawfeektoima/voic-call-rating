@@ -1,13 +1,12 @@
-import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import {
-  ChevronLeft, Phone, Target, TrendingUp, Star, Award,
+  ChevronLeft, Phone, Target, Star, Award,
   ChevronRight, Mail, Users, MessageSquarePlus
 } from 'lucide-react';
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
-  ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, AreaChart, Area, BarChart, Bar
+  ResponsiveContainer, XAxis, YAxis, CartesianGrid,
+  Tooltip, AreaChart, Area
 } from 'recharts';
 import { useApp } from '../context/AppContext';
 import { useMyPerformance } from '../hooks/useMyPerformance';
@@ -15,7 +14,7 @@ import { useAgentDetails } from '../hooks/useAgentDetails';
 import { useAgents } from '../hooks/useAgents';
 import { useCalls } from '../hooks/useCalls';
 import { cn } from '../components/ui/utils';
-import { Agent, Call } from '../lib/types';
+import { Call } from '../lib/types';
 import { Skeleton } from '../components/ui/skeleton';
 import { buildNotesComposeUrl } from '../lib/noteNavigation';
 
@@ -155,8 +154,8 @@ export function AgentProfile() {
               <p className="text-muted-foreground text-xs mt-0.5">{agent.email}</p>
 
               <div className="flex items-center gap-1 mt-2">
-                {Array.from({ length: tc.stars }).map((_, i) => (
-                  <Star key={i} size={12} className="fill-current" style={{ color: tc.color }} />
+                {['star-1', 'star-2', 'star-3', 'star-4'].slice(0, tc.stars).map((starId) => (
+                  <Star key={starId} size={12} className="fill-current" style={{ color: tc.color }} />
                 ))}
                 <span className="text-xs ml-1" style={{ color: tc.color }}>{tc.label}</span>
               </div>

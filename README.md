@@ -91,6 +91,39 @@ Rollback action:
 - If needed, also stop `ingestion-downloader` and `ingestion-inspector`.
 - Restore the VM snapshot identified in the runbook, re-run the manual validation sequence, and only then re-enable the schedule.
 
+## Local SonarQube
+
+This repository includes a ready local SonarQube setup:
+
+- [sonar-project.properties](./sonar-project.properties)
+- [docker-compose.sonarqube.yml](./docker-compose.sonarqube.yml)
+- [scripts/run-sonarqube.ps1](./scripts/run-sonarqube.ps1)
+
+Quick start:
+
+1. Start SonarQube locally:
+
+   ```powershell
+   .\scripts\run-sonarqube.ps1 -StartServer
+   ```
+
+2. Open `http://localhost:9000`, sign in, and create a user token.
+
+3. Run the scan:
+
+   ```powershell
+   .\scripts\run-sonarqube.ps1 -Token <your-token>
+   ```
+
+Notes:
+
+- The script runs the scanner from Docker using the official `sonarsource/sonar-scanner-cli` image.
+- SonarQube runtime data is stored under `D:\voic call rating\.docker\sonarqube` when you run this repository from `D:`.
+- Tests, specs, docs, Alembic history, binary fixtures, and generated frontend `.cjs` bundles are excluded from source analysis.
+- If you generate `coverage.xml` for Python or `AI Call Center Platform/coverage/lcov.info` for the frontend, SonarQube will import them automatically.
+
+If you also want Docker Desktop's own image/cache disk to move off `C:`, change Docker Desktop's disk image location from the Desktop settings UI to a folder on `D:` and restart Docker Desktop before pulling large images.
+
 ## Release Verification
 
 - Backend compile check:

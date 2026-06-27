@@ -1,12 +1,12 @@
 import { useNavigate } from 'react-router';
 import {
-  Phone, Users, TrendingUp, Clock, AlertTriangle, Shield, Zap, Target,
+  Phone, TrendingUp, Clock, Shield, Target,
   ArrowUpRight, ArrowDownRight, Flame, Thermometer, Snowflake, Activity,
-  ChevronRight, CheckCircle, XCircle, MessageSquarePlus
+  ChevronRight, CheckCircle, MessageSquarePlus
 } from 'lucide-react';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Cell
+  Tooltip, ResponsiveContainer
 } from 'recharts';
 import { useApp } from '../context/AppContext';
 import { useDashboard } from '../hooks/useDashboard';
@@ -74,6 +74,10 @@ const alertSeverityConfig = {
   info: { color: 'blue', dot: 'bg-blue-500' },
 };
 
+const dashboardKpiSkeletonKeys = ['dashboard-kpi-1', 'dashboard-kpi-2', 'dashboard-kpi-3', 'dashboard-kpi-4'];
+const dashboardCampaignSkeletonKeys = ['dashboard-campaign-1', 'dashboard-campaign-2', 'dashboard-campaign-3'];
+const dashboardCallSkeletonKeys = ['dashboard-call-1', 'dashboard-call-2', 'dashboard-call-3', 'dashboard-call-4'];
+
 export function Dashboard() {
   const { userRole } = useApp();
   const navigate = useNavigate();
@@ -129,7 +133,7 @@ export function Dashboard() {
       {/* KPI Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {kpisLoading ? (
-          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-32 rounded-xl bg-secondary" />)
+          dashboardKpiSkeletonKeys.map((skeletonKey) => <Skeleton key={skeletonKey} className="h-32 rounded-xl bg-secondary" />)
         ) : (
           <>
             <KPICard label="Calls Today" value={kpis.total_calls_today.toString()} sub="Total since midnight" icon={Phone} color="indigo" />
@@ -195,10 +199,10 @@ export function Dashboard() {
           <h3 className="text-foreground text-sm font-semibold mb-4">Campaign Performance</h3>
           <div className="space-y-3">
             {kpisLoading ? (
-              Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12 w-full bg-secondary rounded-lg" />)
+              dashboardCampaignSkeletonKeys.map((skeletonKey) => <Skeleton key={skeletonKey} className="h-12 w-full bg-secondary rounded-lg" />)
             ) : kpis.campaign_performance.length > 0 ? (
-              kpis.campaign_performance.map((c, i) => (
-                <div key={i}>
+              kpis.campaign_performance.map((c) => (
+                <div key={c.name}>
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-xs text-foreground">{c.name}</span>
                     <span className="text-xs text-muted-foreground">{c.score}/100</span>
@@ -233,7 +237,7 @@ export function Dashboard() {
           </div>
           <div className="divide-y divide-slate-800">
             {callsLoading ? (
-              Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-16 w-full bg-secondary" />)
+              dashboardCallSkeletonKeys.map((skeletonKey) => <Skeleton key={skeletonKey} className="h-16 w-full bg-secondary" />)
             ) : recentCalls && recentCalls.length > 0 ? (
               recentCalls.map((call: Call) => {
                 const score = call.overridden_score ?? call.evaluation_score ?? 0;

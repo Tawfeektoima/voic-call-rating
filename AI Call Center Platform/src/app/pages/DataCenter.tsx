@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import {
   Download, FileJson, FileSpreadsheet, Archive, Filter,
-  Database, Cpu, BarChart3, Shield, CheckCircle, Loader2,
-  Calendar, Tag, ChevronDown, Info
+  Database, Shield, CheckCircle, Loader2,
+  ChevronDown, Info
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { useDashboard } from '../hooks/useDashboard';

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
-  Plus, Radio, Pause, CheckCircle, Users, Phone, Target,
+  Plus, Radio, Pause, CheckCircle, Phone, Target,
   Trash2, Settings, ChevronRight, TrendingUp, Zap, BookOpen
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';

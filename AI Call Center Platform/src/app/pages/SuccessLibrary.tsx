@@ -1,5 +1,5 @@
-import { useState, useRef } from 'react';
-import { Play, Pause, Star, Tag, Clock, BookOpen, TrendingUp, Zap, Target, Search, Filter } from 'lucide-react';
+import { useState } from 'react';
+import { Play, Pause, Star, Clock, BookOpen, TrendingUp, Zap, Target, Search } from 'lucide-react';
 import { useGoldenMoments } from '../hooks/useGoldenMoments';
 import { useCampaigns } from '../hooks/useCampaigns';
 import { Call, Campaign } from '../lib/types';

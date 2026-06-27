@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { ArrowUpRight, FileText, Inbox, Phone, Users } from 'lucide-react';
 import { getTeamLeaderDashboard, getTeamLeaderTeams } from '../lib/api';
-import { TeamLeaderDashboardOut, TeamLeaderTeamRowOut } from '../lib/types';
+import { TeamLeaderTeamRowOut } from '../lib/types';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { EmptyState, ErrorState, PageLoader } from '../components/ui/states';

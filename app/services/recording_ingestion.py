@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -20,7 +21,7 @@ from typing import Any, Callable, Protocol
 from urllib.parse import urljoin, urlparse
 
 import httpx
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -42,6 +43,8 @@ from app.models import (
 )
 from app.services.employee_identity import normalize_employee_code
 
+
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 SUPPORTED_AUDIO_EXTENSIONS = frozenset({".wav", ".mp3", ".ogg", ".flac", ".m4a", ".webm"})
 MAX_REDIRECTS = 5
@@ -1083,7 +1086,6 @@ def handoff_accepted_recording(
         success=True,
     )
     db.commit()
-    db.refresh(call)
     return call
 
 
@@ -2175,13 +2177,15 @@ def inspect_and_handoff_record(
         db.commit()
         return record
 
-    db.commit()
     if record.status == RecordingIngestionRecordStatus.RETRY_SCHEDULED and record.next_retry_at is not None:
+        db.commit()
         retry_at = _coerce_utc_datetime(record.next_retry_at)
         delay_seconds = max(int((retry_at - utcnow()).total_seconds()), 0) if retry_at is not None else None
         _queue_retry_if_needed(retry_queue, record_id=record.id, delay_seconds=delay_seconds)
-    if record.status == RecordingIngestionRecordStatus.ACCEPTED:
+    elif record.status == RecordingIngestionRecordStatus.ACCEPTED:
         handoff_accepted_recording(db, record, run=run, queue_task=queue_task, retry_queue=retry_queue)
+    else:
+        db.commit()
     return record
 
 
@@ -2203,7 +2207,6 @@ def finalize_ingestion_run_if_ready(db: Session, run: RecordingIngestionRun) -> 
     if run.completed_at is not None:
         return run
 
-    records = db.query(RecordingIngestionRecord).filter(RecordingIngestionRecord.ingestion_run_id == run.id).all()
     active_statuses = {
         RecordingIngestionRecordStatus.PENDING,
         RecordingIngestionRecordStatus.DOWNLOADING,
@@ -2212,17 +2215,31 @@ def finalize_ingestion_run_if_ready(db: Session, run: RecordingIngestionRun) -> 
         RecordingIngestionRecordStatus.ACCEPTED,
         RecordingIngestionRecordStatus.HANDOFF_PENDING,
     }
-    if any(record.status in active_statuses for record in records):
+    active_count = (
+        db.query(func.count(RecordingIngestionRecord.id))
+        .filter(
+            RecordingIngestionRecord.ingestion_run_id == run.id,
+            RecordingIngestionRecord.status.in_(active_statuses),
+        )
+        .scalar()
+    )
+    if active_count:
         run.status = RecordingIngestionRunStatus.PROCESSING
         db.flush()
         return run
 
     source_row_failures = run.failed_count
-    run.success_count = sum(record.status == RecordingIngestionRecordStatus.SUBMITTED for record in records)
-    run.retryable_count = sum(record.status == RecordingIngestionRecordStatus.RETRY_SCHEDULED for record in records)
+    status_counts = dict(
+        db.query(RecordingIngestionRecord.status, func.count(RecordingIngestionRecord.id))
+        .filter(RecordingIngestionRecord.ingestion_run_id == run.id)
+        .group_by(RecordingIngestionRecord.status)
+        .all()
+    )
+    run.success_count = status_counts.get(RecordingIngestionRecordStatus.SUBMITTED, 0)
+    run.retryable_count = status_counts.get(RecordingIngestionRecordStatus.RETRY_SCHEDULED, 0)
     run.failed_count = source_row_failures + sum(
-        record.status in {RecordingIngestionRecordStatus.FAILED, RecordingIngestionRecordStatus.REJECTED}
-        for record in records
+        status_counts.get(status, 0)
+        for status in {RecordingIngestionRecordStatus.FAILED, RecordingIngestionRecordStatus.REJECTED}
     )
     run.status = (
         RecordingIngestionRunStatus.COMPLETED_WITH_ERRORS

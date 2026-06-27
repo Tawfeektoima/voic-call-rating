@@ -60,7 +60,6 @@ import {
   InterviewCandidate,
   InterviewCandidateDocument,
   InterviewCandidateTimelineEvent,
-  InterviewJob,
   InterviewMcqQuestionOut,
   InterviewMcqSubmissionOut,
   InterviewRetentionPurgeOut,
@@ -105,7 +104,7 @@ const defaultConvertDraft: ConvertDraft = {
   role: 'AGENT',
   department: '',
   otp_email: '',
-  password: 'Eiacs$1234#',
+  password: '',
 };
 
 const WHISPER_DEFAULT_SOFT_SKILLS_BANK: InterviewMcqQuestionOut[] = [
@@ -418,7 +417,7 @@ export function HRInterviews() {
         role: 'AGENT',
         department: selectedJob?.department || '',
         otp_email: selectedCandidate.contact_email_normalized,
-        password: 'Eiacs$1234#',
+        password: '',
       });
     }
   }, [selectedCandidate, selectedJob?.department]);
@@ -2186,12 +2185,17 @@ export function HRInterviews() {
                                 />
                               </label>
                               <label className="space-y-2 block">
-                                <span className="text-xs font-medium text-muted-foreground">Initial password</span>
+                                <span className="text-xs font-medium text-muted-foreground">Initial password optional</span>
                                 <input
+                                  type="password"
                                   value={convertDraft.password}
                                   onChange={(e) => setConvertDraft((current) => ({ ...current, password: e.target.value }))}
                                   className="w-full h-11 rounded-xl border border-border bg-background px-3 text-sm text-foreground"
+                                  placeholder="Leave blank to use the backend default"
                                 />
+                                <p className="text-[11px] text-muted-foreground">
+                                  Do not enter shared credentials here. Leave blank unless HR assigns a one-time credential.
+                                </p>
                               </label>
                               <div className="rounded-xl border border-border bg-background px-3 py-2">
                                 <p className="text-xs text-muted-foreground flex items-center gap-2">

@@ -1,10 +1,9 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import {
-  Plus, Radio, Pause, CheckCircle, Users, Phone, Target,
+  Plus, Users, Phone, Target,
   Trash2, Settings, ChevronRight, TrendingUp, Zap, BookOpen,
-  Search, Sliders, Save, X, Layout, FileText, Palette, Info,
-  ChevronDown, AlertCircle
+  Search, Save, Layout, FileText, Info
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useApp } from '../context/AppContext';

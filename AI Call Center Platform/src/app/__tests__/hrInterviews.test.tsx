@@ -594,4 +594,54 @@ describe('HR interview workspace', () => {
 
     expect(html3).toContain('Loading timeline...');
   });
+
+  it('renders secure optional password guidance for accepted candidates', async () => {
+    mockGetInterviewCandidates.mockResolvedValue([
+      {
+        id: 31,
+        job_id: 11,
+        full_name: 'Candidate Maya',
+        contact_email: 'maya@example.com',
+        contact_email_normalized: 'maya@example.com',
+        phone_number: '01099999999',
+        phone_normalized: '01099999999',
+        national_id_last4: '4567',
+        status: 'accepted',
+        final_score: 91,
+        global_percentile: 88,
+        applied_at: '2026-06-14T00:00:00.000Z',
+        completed_at: '2026-06-15T10:00:00.000Z',
+        archived_at: null,
+        converted_employee_id: null,
+        created_by_id: 77,
+        mcq_score: 12,
+        mcq_total_questions: 15,
+        mcq_percentage: 80,
+        mcq_completed_at: '2026-06-15T10:00:00.000Z',
+      },
+    ]);
+
+    const client = createClient();
+    await Promise.all([
+      client.prefetchQuery({ queryKey: ['interview-jobs'], queryFn: () => mockGetInterviewJobs() }),
+      client.prefetchQuery({ queryKey: ['interview-candidates', 11], queryFn: () => mockGetInterviewCandidates() }),
+      client.prefetchQuery({ queryKey: ['interview-answers', 31], queryFn: () => mockGetInterviewCandidateAnswers() }),
+      client.prefetchQuery({ queryKey: ['interview-documents', 31], queryFn: () => mockGetInterviewCandidateDocuments() }),
+      client.prefetchQuery({ queryKey: ['interview-candidate-onboarding-readiness', 31], queryFn: () => mockGetInterviewCandidateOnboardingReadiness() }),
+      client.prefetchQuery({ queryKey: ['interview-teams'], queryFn: () => mockGetTeamsDirectory() }),
+      client.prefetchQuery({ queryKey: ['interview-campaigns'], queryFn: () => mockGetCampaigns() }),
+    ]);
+
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <HRInterviews />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    expect(html).toContain('Initial password optional');
+    expect(html).toContain('Leave blank to use the backend default');
+    expect(html).toContain('Do not enter shared credentials here. Leave blank unless HR assigns a one-time credential.');
+  });
 });

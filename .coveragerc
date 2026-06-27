@@ -1,0 +1,13 @@
+[run]
+relative_files = True
+source = .
+
+[report]
+omit =
+    tests/*
+    alembic/*
+    */__pycache__/*
+    .venv/*
+    .runtime/*
+    AI Call Center Platform/*
+    scripts/scratch/*

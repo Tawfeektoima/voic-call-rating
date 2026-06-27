@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import {
-  Activity, AlertTriangle, CheckCircle, Clock, Cpu, Zap,
-  Server, Database, RefreshCw, X, Volume2, AlertOctagon, Info
+  AlertTriangle, CheckCircle,
+  Server, RefreshCw, X, Volume2, AlertOctagon
 } from 'lucide-react';
 import {
-  LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid,
+  LineChart, Line, AreaChart, Area, XAxis, YAxis,
   Tooltip, ResponsiveContainer
 } from 'recharts';
 import { useSystemMetrics, useSystemAlerts, useResolveAlert } from '../hooks/useSystemHealth';
-import { SystemAlert, SystemMetrics } from '../lib/types';
+import { SystemAlert } from '../lib/types';
 import { cn } from '../components/ui/utils';
 import { Skeleton } from '../components/ui/skeleton';
 
@@ -25,6 +25,9 @@ const severityConfig = {
   warning: { color: 'amber', bg: 'bg-amber-500/8', border: 'border-amber-500/25', dot: 'bg-amber-500', label: 'Warning', iconBg: 'bg-amber-500/15', iconText: 'text-amber-400', badgeBg: 'bg-amber-500/15', badgeText: 'text-amber-400' },
   info: { color: 'blue', bg: 'bg-blue-500/8', border: 'border-blue-500/25', dot: 'bg-blue-500', label: 'Info', iconBg: 'bg-blue-500/15', iconText: 'text-blue-400', badgeBg: 'bg-blue-500/15', badgeText: 'text-blue-400' },
 };
+
+const systemHealthGaugeSkeletonKeys = ['system-health-gauge-1', 'system-health-gauge-2', 'system-health-gauge-3', 'system-health-gauge-4', 'system-health-gauge-5'];
+const systemHealthAlertSkeletonKeys = ['system-health-alert-1', 'system-health-alert-2', 'system-health-alert-3'];
 
 function AlertItem({ alert, onResolve }: { alert: SystemAlert; onResolve: () => void }) {
   const atc = (alertTypeConfig as any)[alert.error_type] || alertTypeConfig.system;
@@ -158,7 +161,7 @@ export function SystemHealth() {
 
         {metricsLoading ? (
           <div className="flex justify-around py-10">
-            {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="size-20 rounded-full bg-secondary" />)}
+            {systemHealthGaugeSkeletonKeys.map((skeletonKey) => <Skeleton key={skeletonKey} className="size-20 rounded-full bg-secondary" />)}
           </div>
         ) : metrics && (
           <div className="flex items-center justify-around flex-wrap gap-6 mb-6">
@@ -257,7 +260,7 @@ export function SystemHealth() {
 
         <div className="p-4 space-y-3 max-h-[500px] overflow-y-auto">
           {alertsLoading ? (
-            Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-20 w-full bg-secondary" />)
+            systemHealthAlertSkeletonKeys.map((skeletonKey) => <Skeleton key={skeletonKey} className="h-20 w-full bg-secondary" />)
           ) : displayAlerts.length > 0 ? displayAlerts.map(alert => (
             <AlertItem key={alert.id} alert={alert} onResolve={() => handleResolve(alert.id)} />
           )) : (

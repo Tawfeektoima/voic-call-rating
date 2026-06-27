@@ -1,6 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { EmotionPoint, EmotionState } from '../../lib/types';
-import { cn } from '../ui/utils';
 
 interface Props {
   emotionTimeline: EmotionPoint[];

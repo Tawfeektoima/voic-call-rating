@@ -14,9 +14,9 @@ export function OfferFunnel({ presented, skipped, details }: OfferFunnelProps) {
       <h3 className="text-foreground text-sm font-semibold mb-4">Offer Presentation Funnel</h3>
       
       <div className="space-y-3">
-        {details.map((offer, idx) => (
+        {details.map((offer) => (
           <div 
-            key={idx} 
+            key={`${offer.offer_name}-${offer.presented ? 'presented' : 'skipped'}-${offer.skip_reason || 'none'}`} 
             className={cn(
               "flex items-center justify-between p-3 rounded-lg border",
               offer.presented ? "bg-emerald-500/5 border-emerald-500/10" : 

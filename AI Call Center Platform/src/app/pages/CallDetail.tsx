@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import {
-  Play, Pause, SkipBack, SkipForward, Volume2, Download,
-  Star, Tag, ChevronLeft, User, Mic, Clock, Target,
+  Play, Pause, SkipBack, SkipForward, Volume2,
+  Star, Tag, ChevronLeft, Target,
   Flame, Thermometer, Snowflake, Loader2, ShieldAlert, MessageSquarePlus
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { getCallDetails, getEmployees, getCampaigns, getTeamLeaderCall } from '../lib/api';
-import { Call, CallStatus, Agent, Campaign, TeamLeaderCallRowOut } from '../lib/types';
+import { Call, CallStatus, TeamLeaderCallRowOut } from '../lib/types';
 import { EmotionalWaveform } from '../components/call/EmotionalWaveform';
 import { TalkListenGauge } from '../components/call/TalkListenGauge';
 import { InteractiveTranscript } from '../components/call/InteractiveTranscript';

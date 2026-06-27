@@ -48,13 +48,17 @@ function formatToken(token: string | null | undefined) {
 }
 
 export function NoteContextCard({ note, compact = false }: { note: RoleNote; compact?: boolean }) {
+  const hasTeamContext = note.team_id !== null && note.team_id !== undefined;
+  const hasCampaignContext = note.campaign_id !== null && note.campaign_id !== undefined;
+  const hasEmployeeContext = note.employee_id !== null && note.employee_id !== undefined;
+  const hasCallContext = note.call_id !== null && note.call_id !== undefined;
+  const hasKpiContext = Boolean(note.kpi_key || note.kpi_label);
   const hasContext = Boolean(
-    note.team_id ||
-    note.campaign_id ||
-    note.employee_id ||
-    note.call_id ||
-    note.kpi_key ||
-    note.kpi_label,
+    hasTeamContext ||
+    hasCampaignContext ||
+    hasEmployeeContext ||
+    hasCallContext ||
+    hasKpiContext,
   );
 
   return (
@@ -73,25 +77,25 @@ export function NoteContextCard({ note, compact = false }: { note: RoleNote; com
 
         {hasContext ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {note.team_id && (
+            {hasTeamContext && (
               <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Team</p>
                 <p className="text-sm text-foreground font-medium">{note.team_name_snapshot || `Team #${note.team_id}`}</p>
               </div>
             )}
-            {note.campaign_id && (
+            {hasCampaignContext && (
               <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Campaign</p>
                 <p className="text-sm text-foreground font-medium">{note.campaign_name_snapshot || `Campaign #${note.campaign_id}`}</p>
               </div>
             )}
-            {note.employee_id && (
+            {hasEmployeeContext && (
               <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Employee</p>
                 <p className="text-sm text-foreground font-medium">{note.agent_name_snapshot || `Employee #${note.employee_id}`}</p>
               </div>
             )}
-            {note.call_id && (
+            {hasCallContext && (
               <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Call</p>
                 <p className="text-sm text-foreground font-medium">Call #{note.call_id}</p>
@@ -102,7 +106,7 @@ export function NoteContextCard({ note, compact = false }: { note: RoleNote; com
           <p className="text-xs text-muted-foreground">General workflow note with no linked business context.</p>
         )}
 
-        {(note.kpi_key || note.kpi_label) && <KpiNoteCard note={note} />}
+        {hasKpiContext && <KpiNoteCard note={note} />}
       </CardContent>
     </Card>
   );

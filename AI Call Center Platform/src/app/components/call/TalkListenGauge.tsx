@@ -49,8 +49,8 @@ export function TalkListenGauge({ agentSeconds, customerSeconds, silenceSeconds 
                 startAngle={90}
                 endAngle={-270}
               >
-                {data.map((entry, index) => (
-                  <Cell key={index} fill={entry.color} />
+                {data.map((entry) => (
+                  <Cell key={entry.name} fill={entry.color} />
                 ))}
               </Pie>
               <Tooltip
