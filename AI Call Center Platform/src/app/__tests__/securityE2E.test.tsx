@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import axios from 'axios';
 import { toast } from 'sonner';
@@ -32,6 +32,14 @@ class StorageMock {
     this.store = {};
   }
 }
+
+const buildLocationMock = (overrides: Record<string, unknown> = {}) => ({
+  pathname: '/notes',
+  href: '',
+  hostname: 'localhost',
+  origin: 'http://localhost:3000',
+  ...overrides,
+});
 
 const mockUseApp = vi.fn();
 vi.mock('../context/AppContext', async (importOriginal) => {
@@ -75,7 +83,7 @@ describe('Frontend Security E2E Integration Suite', () => {
     (global as any).localStorage = mockLocalStorage;
     (global as any).sessionStorage = mockSessionStorage;
     (global as any).window = global;
-    (global as any).window.location = { pathname: '/notes', href: '' };
+    (global as any).window.location = buildLocationMock();
     (global as any).window.localStorage = mockLocalStorage;
     (global as any).window.sessionStorage = mockSessionStorage;
     
@@ -144,11 +152,13 @@ describe('Frontend Security E2E Integration Suite', () => {
       const passwordInput = screen.getByPlaceholderText('••••••••');
       fireEvent.change(codeInput, { target: { value: 'agent_code' } });
       fireEvent.change(passwordInput, { target: { value: 'password123' } });
-      fireEvent.click(screen.getByText('Sign In'));
+      await act(async () => {
+        fireEvent.click(screen.getByText('Sign In'));
+      });
       
       await waitFor(() => {
         const loginCall = postSpy.mock.calls.find(([url]) =>
-          typeof url === 'string' && url.includes('/api/auth/login')
+          typeof url === 'string' && /\/api\/auth\/login(?:\?|$)/.test(url)
         );
         expect(loginCall).toBeDefined();
         expect(loginCall?.[1]).toMatchObject({
@@ -159,13 +169,15 @@ describe('Frontend Security E2E Integration Suite', () => {
       });
       
       // Verify OTP screen renders
-      expect(screen.getByText('Verification Code')).toBeInTheDocument();
+      expect(await screen.findByText('Verification Code')).toBeInTheDocument();
       
       // Submit OTP verification
       const otpInput = screen.getByPlaceholderText('000000');
       fireEvent.change(otpInput, { target: { value: '123456' } });
       
-      fireEvent.click(screen.getByText('Verify Code'));
+      await act(async () => {
+        fireEvent.click(screen.getByText('Verify Code'));
+      });
       
       await waitFor(() => {
         const verifyCall = postSpy.mock.calls.find(([url]) =>
@@ -389,7 +401,7 @@ describe('Frontend Security E2E Integration Suite', () => {
       mockLocalStorage.setItem('call_rating_device_id', testDeviceId);
       
       // Setup window location mock
-      (global as any).window.location = { pathname: '/notes', href: '' };
+      (global as any).window.location = buildLocationMock({ pathname: '/notes', href: '' });
       
       // Temporarily remove the useApp mock so we get the real AppProvider + real useApp
       let capturedForceLogout: ((reason?: string) => void) | null = null;
@@ -454,7 +466,7 @@ describe('Frontend Security E2E Integration Suite', () => {
       mockLocalStorage.setItem('call_rating_device_id', testDeviceId);
       
       // Setup window location mock
-      (global as any).window.location = { pathname: '/notes', href: '' };
+      (global as any).window.location = buildLocationMock({ pathname: '/notes', href: '' });
       
       const apiModule = await import('../lib/api');
       let capturedCallback: ((reason: string) => void) | null = null;
