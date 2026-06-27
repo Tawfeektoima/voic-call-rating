@@ -107,14 +107,31 @@ describe('Frontend Security E2E Integration Suite', () => {
       mockLocalStorage.setItem('call_rating_device_id', testDeviceId);
       
       // 2. Mock axios login response requiring OTP
-      const postSpy = vi.spyOn(axios, 'post').mockResolvedValue({
-        status: 200,
-        data: {
-          otp_required: true,
-          challenge_id: 'challenge-123',
-          dev_otp_code: '123456'
-        }
-      });
+      const postSpy = vi.spyOn(axios, 'post')
+        .mockResolvedValueOnce({
+          status: 200,
+          data: {
+            otp_required: true,
+            challenge_id: 'challenge-123',
+            destination: 'st***@example.com',
+            dev_otp_code: '123456'
+          }
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          data: {
+            access_token: 'valid-jwt-token-xyz',
+            user: {
+              id: 1,
+              name: 'Agent User',
+              email: 'agent@example.com',
+              role: 'ADMIN',
+              permissions: [],
+              account_status: 'active'
+            },
+            session: { session_id: 99, expires_at: '2026-06-19T00:00:00Z', policy_mode: 'enforce' }
+          }
+        });
       
       render(
         <MemoryRouter>
@@ -146,15 +163,6 @@ describe('Frontend Security E2E Integration Suite', () => {
       // Submit OTP verification
       const otpInput = screen.getByPlaceholderText('000000');
       fireEvent.change(otpInput, { target: { value: '123456' } });
-      
-      // Resolve verify-otp
-      postSpy.mockResolvedValue({
-        status: 200,
-        data: {
-          access_token: 'valid-jwt-token-xyz',
-          session: { session_id: 99, expires_at: '2026-06-19T00:00:00Z', policy_mode: 'enforce' }
-        }
-      });
       
       fireEvent.click(screen.getByText('Verify Code'));
       
