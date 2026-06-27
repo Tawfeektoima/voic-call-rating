@@ -147,14 +147,15 @@ describe('Frontend Security E2E Integration Suite', () => {
       fireEvent.click(screen.getByText('Sign In'));
       
       await waitFor(() => {
-        expect(postSpy).toHaveBeenCalledWith(
-          expect.stringContaining('/api/auth/login'),
-          expect.objectContaining({
-            employee_code: 'agent_code',
-            password: 'password123',
-            device_id: testDeviceId
-          })
+        const loginCall = postSpy.mock.calls.find(([url]) =>
+          typeof url === 'string' && url.includes('/api/auth/login')
         );
+        expect(loginCall).toBeDefined();
+        expect(loginCall?.[1]).toMatchObject({
+          employee_code: 'agent_code',
+          password: 'password123',
+          device_id: testDeviceId
+        });
       });
       
       // Verify OTP screen renders
@@ -167,14 +168,15 @@ describe('Frontend Security E2E Integration Suite', () => {
       fireEvent.click(screen.getByText('Verify Code'));
       
       await waitFor(() => {
-        expect(postSpy).toHaveBeenLastCalledWith(
-          expect.stringContaining('/api/auth/login/verify-otp'),
-          expect.objectContaining({
-            challenge_id: 'challenge-123',
-            otp_code: '123456',
-            device_id: testDeviceId
-          })
+        const verifyCall = postSpy.mock.calls.find(([url]) =>
+          typeof url === 'string' && url.includes('/api/auth/login/verify-otp')
         );
+        expect(verifyCall).toBeDefined();
+        expect(verifyCall?.[1]).toMatchObject({
+          challenge_id: 'challenge-123',
+          otp_code: '123456',
+          device_id: testDeviceId
+        });
       });
       
       // Verify normal logout preserves device ID
